@@ -35,6 +35,7 @@ server = Server("polymarket-trading")
 config: Optional[PolymarketConfig] = None
 polymarket_client: Optional[PolymarketClient] = None
 safety_limits: Optional[SafetyLimits] = None
+rate_limiter = None
 trading_tools: Optional[TradingTools] = None
 websocket_manager: Optional[WebSocketManager] = None
 
@@ -207,7 +208,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
                 name,
                 arguments,
                 polymarket_client,
-                safety_limits,
+                rate_limiter,
                 config
             )
 
@@ -217,8 +218,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
                       "unsubscribe_realtime"]:
             if not websocket_manager:
                 raise ValueError("WebSocket manager not initialized")
-            result = await realtime.handle_tool(name, arguments, websocket_manager, server)
-            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+            return await realtime.handle_tool_call(name, arguments)
 
         # Route to trading tools
         elif trading_tools:
@@ -286,7 +286,7 @@ async def initialize_server() -> None:
     - Initialize trading tools
     - Initialize WebSocket manager
     """
-    global config, polymarket_client, safety_limits, trading_tools, websocket_manager
+    global config, polymarket_client, safety_limits, rate_limiter, trading_tools, websocket_manager
 
     try:
         # Load configuration
@@ -305,7 +305,7 @@ async def initialize_server() -> None:
             address=config.POLYGON_ADDRESS,
             chain_id=config.POLYMARKET_CHAIN_ID,
             api_key=config.POLYMARKET_API_KEY,
-            api_secret=config.POLYMARKET_PASSPHRASE,
+            api_secret=config.POLYMARKET_API_SECRET,
             passphrase=config.POLYMARKET_PASSPHRASE,
         )
 
@@ -352,8 +352,13 @@ async def initialize_server() -> None:
         # Initialize WebSocket manager
         logger.info("Initializing WebSocket manager...")
         websocket_manager = WebSocketManager(config)
-        # Connect WebSocket (non-blocking)
-        asyncio.create_task(websocket_manager.connect())
+        realtime.set_websocket_manager(websocket_manager)
+
+        async def _initialize_websocket_manager() -> None:
+            await websocket_manager.connect()
+            await websocket_manager.start_background_task()
+
+        asyncio.create_task(_initialize_websocket_manager())
         logger.info("WebSocket manager initialized with 7 real-time tools")
 
         logger.info("Server initialization complete!")

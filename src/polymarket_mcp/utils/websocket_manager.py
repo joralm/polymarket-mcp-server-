@@ -260,7 +260,7 @@ class WebSocketManager:
             auth_message = {
                 "auth": {
                     "apiKey": self.config.POLYMARKET_API_KEY,
-                    "secret": self.config.POLYMARKET_PASSPHRASE,
+                    "secret": self.config.POLYMARKET_API_SECRET or self.config.POLYMARKET_PASSPHRASE,
                     "passphrase": self.config.POLYMARKET_PASSPHRASE
                 }
             }
@@ -799,28 +799,26 @@ class WebSocketManager:
                     await self.reconnect()
                     continue
 
-                # Process messages from both WebSockets
                 tasks = []
-
                 if self.clob_ws and not self.clob_ws.closed:
-                    tasks.append(self._receive_clob_messages())
-
+                    tasks.append(asyncio.create_task(self._listen_to_websocket("clob")))
                 if self.realtime_ws and not self.realtime_ws.closed:
-                    tasks.append(self._receive_realtime_messages())
+                    tasks.append(asyncio.create_task(self._listen_to_websocket("realtime")))
 
-                if tasks:
-                    # Wait for any message or timeout
-                    done, pending = await asyncio.wait(
-                        tasks,
-                        timeout=1.0,
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-
-                    # Cancel pending tasks
-                    for task in pending:
-                        task.cancel()
-                else:
+                if not tasks:
                     await asyncio.sleep(1.0)
+                    continue
+
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+                for task in done:
+                    exc = task.exception()
+                    if exc:
+                        raise exc
+
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket connection closed, reconnecting...")
@@ -830,6 +828,18 @@ class WebSocketManager:
                 await asyncio.sleep(1.0)
 
         logger.info("Background WebSocket loop stopped")
+
+    async def _listen_to_websocket(self, channel: str) -> None:
+        """Continuously receive messages from a single websocket channel."""
+        while self.should_run:
+            if channel == "clob":
+                if not self.clob_ws or self.clob_ws.closed:
+                    return
+                await self._receive_clob_messages()
+            else:
+                if not self.realtime_ws or self.realtime_ws.closed:
+                    return
+                await self._receive_realtime_messages()
 
     async def _receive_clob_messages(self) -> None:
         """Receive messages from CLOB WebSocket"""

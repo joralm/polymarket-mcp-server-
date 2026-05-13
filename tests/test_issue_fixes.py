@@ -8,8 +8,12 @@ Tests for GitHub issue fixes (#2, #6, #10).
 import pytest
 import logging
 import importlib
+import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
+
+from polymarket_mcp.config import PolymarketConfig
+from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +211,118 @@ class TestMarketFiltering:
             call_args = mock_fetch.call_args
             params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("params", {})
             assert params.get("closed") == "false"
+
+
+class TestCriticalRuntimeFixes:
+    """Regression tests for portfolio and realtime issue fixes."""
+
+    @pytest.mark.asyncio
+    async def test_server_passes_rate_limiter_to_portfolio_tools(self):
+        """Portfolio tools should receive the rate limiter, not safety limits."""
+        import polymarket_mcp.server as server_module
+
+        server_module.polymarket_client = object()
+        server_module.rate_limiter = object()
+        server_module.safety_limits = object()
+        server_module.config = object()
+
+        with patch.object(
+            server_module.portfolio_integration,
+            "call_portfolio_tool",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = []
+
+            await server_module.call_tool("get_all_positions", {})
+
+        assert mock_call.await_args.args[3] is server_module.rate_limiter
+
+    @pytest.mark.asyncio
+    async def test_server_routes_realtime_calls_through_registered_manager(self):
+        """Realtime calls should delegate to the realtime tool handler without a missing attribute error."""
+        import polymarket_mcp.server as server_module
+
+        server_module.websocket_manager = object()
+
+        with patch.object(
+            server_module.realtime,
+            "handle_tool_call",
+            new_callable=AsyncMock,
+        ) as mock_handle:
+            expected = [MagicMock()]
+            mock_handle.return_value = expected
+
+            result = await server_module.call_tool("get_realtime_status", {})
+
+        assert result is expected
+        mock_handle.assert_awaited_once_with("get_realtime_status", {})
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_registers_and_starts_websocket_manager(self):
+        """Server init should register realtime manager and start the background loop."""
+        import polymarket_mcp.server as server_module
+
+        fake_config = MagicMock()
+        fake_config.POLYGON_PRIVATE_KEY = "0" * 64
+        fake_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        fake_config.POLYMARKET_CHAIN_ID = 137
+        fake_config.POLYMARKET_API_KEY = None
+        fake_config.POLYMARKET_API_SECRET = None
+        fake_config.POLYMARKET_PASSPHRASE = None
+        fake_config.LOG_LEVEL = "INFO"
+
+        fake_client = MagicMock()
+        fake_client.has_api_credentials.return_value = False
+        fake_client.create_api_credentials = AsyncMock(side_effect=RuntimeError("skip"))
+
+        fake_manager = MagicMock()
+        fake_manager.connect = AsyncMock()
+        fake_manager.start_background_task = AsyncMock()
+
+        scheduled = []
+
+        def capture_task(coro):
+            scheduled.append(coro)
+            return MagicMock()
+
+        with (
+            patch.object(server_module, "load_config", return_value=fake_config),
+            patch.object(server_module, "create_polymarket_client", return_value=fake_client),
+            patch.object(server_module, "create_safety_limits_from_config", return_value=object()),
+            patch.object(server_module, "get_rate_limiter", return_value=object()),
+            patch.object(server_module, "WebSocketManager", return_value=fake_manager),
+            patch.object(server_module.realtime, "set_websocket_manager") as mock_set_manager,
+            patch.object(server_module.asyncio, "create_task", side_effect=capture_task),
+        ):
+            await server_module.initialize_server()
+
+        mock_set_manager.assert_called_once_with(fake_manager)
+        assert len(scheduled) == 1
+        await scheduled[0]
+        fake_manager.connect.assert_awaited_once()
+        fake_manager.start_background_task.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_websocket_auth_uses_secret_and_passphrase(self):
+        """WebSocket auth payload should keep secret and passphrase distinct."""
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_API_KEY="test-key",
+            POLYMARKET_API_SECRET="test-secret",
+            POLYMARKET_PASSPHRASE="test-passphrase",
+            POLYMARKET_API_KEY_NAME="test-name",
+        )
+        manager = WebSocketManager(config=config)
+        manager.clob_ws = AsyncMock()
+        manager.clob_ws.recv = AsyncMock(return_value='{"type":"authenticated"}')
+
+        await manager._authenticate_clob()
+
+        payload = manager.clob_ws.send.await_args.args[0]
+        data = json.loads(payload)
+        assert data["auth"]["secret"] == "test-secret"
+        assert data["auth"]["passphrase"] == "test-passphrase"
             assert params.get("active") == "true"
 
     @pytest.mark.asyncio

@@ -58,10 +58,11 @@ class PolymarketClient:
         self.api_creds: Optional[ApiCreds] = None
         if api_key and (api_secret or passphrase):
             secret = api_secret or passphrase
+            auth_passphrase = passphrase or secret
             self.api_creds = ApiCreds(
                 api_key=api_key,
                 api_secret=secret,
-                api_passphrase=secret
+                api_passphrase=auth_passphrase
             )
 
         # Initialize CLOB client
