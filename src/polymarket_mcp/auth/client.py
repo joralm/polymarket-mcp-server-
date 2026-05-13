@@ -2,11 +2,11 @@
 Polymarket CLOB client with authentication.
 Handles L1 (private key) and L2 (API key) authentication.
 """
+
 from typing import Dict, Any, List, Optional
 import logging
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
-from py_clob_client.constants import POLYGON
+from py_clob_client.clob_types import ApiCreds, OrderArgs
 
 from .signer import OrderSigner
 
@@ -60,9 +60,7 @@ class PolymarketClient:
             secret = api_secret or passphrase
             auth_passphrase = passphrase or secret
             self.api_creds = ApiCreds(
-                api_key=api_key,
-                api_secret=secret,
-                api_passphrase=auth_passphrase
+                api_key=api_key, api_secret=secret, api_passphrase=auth_passphrase
             )
 
         # Initialize CLOB client
@@ -137,7 +135,7 @@ class PolymarketClient:
             self.api_creds = ApiCreds(
                 api_key=creds.api_key,
                 api_secret=creds.api_secret,
-                api_passphrase=creds.api_passphrase
+                api_passphrase=creds.api_passphrase,
             )
 
             # Reinitialize client with new credentials
@@ -151,9 +149,7 @@ class PolymarketClient:
             raise
 
     async def get_markets(
-        self,
-        next_cursor: Optional[str] = None,
-        limit: int = 100
+        self, next_cursor: Optional[str] = None, limit: int = 100
     ) -> Dict[str, Any]:
         """
         Fetch markets from Polymarket.
@@ -192,10 +188,7 @@ class PolymarketClient:
             logger.error(f"Failed to fetch market {condition_id}: {e}")
             raise
 
-    async def get_orderbook(
-        self,
-        token_id: str
-    ) -> Dict[str, Any]:
+    async def get_orderbook(self, token_id: str) -> Dict[str, Any]:
         """
         Fetch order book for a token.
 
@@ -213,11 +206,7 @@ class PolymarketClient:
             logger.error(f"Failed to fetch orderbook for {token_id}: {e}")
             raise
 
-    async def get_price(
-        self,
-        token_id: str,
-        side: str
-    ) -> float:
+    async def get_price(self, token_id: str, side: str) -> float:
         """
         Get current price for a token.
 
@@ -243,7 +232,7 @@ class PolymarketClient:
         size: float,
         side: str,
         order_type: str = "GTC",
-        expiration: Optional[int] = None
+        expiration: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Post a limit order.
@@ -345,9 +334,7 @@ class PolymarketClient:
             raise
 
     async def get_orders(
-        self,
-        market: Optional[str] = None,
-        asset_id: Optional[str] = None
+        self, market: Optional[str] = None, asset_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Get user's open orders.
@@ -463,5 +450,5 @@ def create_polymarket_client(
         chain_id=chain_id,
         api_key=api_key,
         api_secret=api_secret,
-        passphrase=passphrase
+        passphrase=passphrase,
     )
