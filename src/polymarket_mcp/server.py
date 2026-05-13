@@ -66,7 +66,9 @@ def get_transport_mode() -> str:
     raw = os.getenv("MCP_TRANSPORT", "streamable-http").strip().lower()
     normalized = raw.replace("_", "-")
     if normalized not in {"streamable-http", "stdio"}:
-        raise ValueError("Invalid MCP_TRANSPORT value. Use 'streamable-http' or 'stdio'.")
+        raise ValueError(
+            "Invalid MCP_TRANSPORT value. Use 'streamable-http' (or 'streamable_http') or 'stdio'."
+        )
     return normalized
 
 

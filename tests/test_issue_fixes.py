@@ -217,6 +217,7 @@ class TestMarketFiltering:
             call_args = mock_fetch.call_args
             params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("params", {})
             assert params.get("closed") == "false"
+            assert params.get("active") == "true"
 
 
 class TestStreamableHTTPTransport:
