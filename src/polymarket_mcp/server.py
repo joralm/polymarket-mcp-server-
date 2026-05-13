@@ -232,7 +232,9 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
             "suggest_portfolio_actions",
         ]:
             if not rate_limiter:
-                raise ValueError("Rate limiter not initialized")
+                raise ValueError(
+                    "Rate limiter not initialized. Ensure initialize_server() has run first."
+                )
             return await portfolio_integration.call_portfolio_tool(
                 name, arguments, polymarket_client, rate_limiter, config
             )
