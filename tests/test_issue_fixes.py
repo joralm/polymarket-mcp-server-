@@ -303,6 +303,15 @@ class TestStreamableHTTPTransport:
             with pytest.raises(ValueError, match="between 1 and 65535"):
                 server_module.get_streamable_http_settings()
 
+    @pytest.mark.parametrize("invalid_port", ["0", "-1"])
+    def test_streamable_http_settings_reject_non_positive_ports(self, invalid_port):
+        """Streamable HTTP settings should reject zero/negative ports."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict("os.environ", {"MCP_STREAMABLE_HTTP_PORT": invalid_port}, clear=True):
+            with pytest.raises(ValueError, match="between 1 and 65535"):
+                server_module.get_streamable_http_settings()
+
 
 class TestWebSocketRuntimeRobustness:
     """Regression tests for websocket runtime safety checks."""
