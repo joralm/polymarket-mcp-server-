@@ -242,7 +242,13 @@ class TestCriticalRuntimeFixes:
 
             await server_module.call_tool("get_all_positions", {})
 
-        assert mock_call.await_args.args[3] is server_module.rate_limiter
+        mock_call.assert_awaited_once_with(
+            "get_all_positions",
+            {},
+            server_module.polymarket_client,
+            server_module.rate_limiter,
+            server_module.config,
+        )
 
     @pytest.mark.asyncio
     async def test_server_routes_realtime_calls_through_registered_manager(self):

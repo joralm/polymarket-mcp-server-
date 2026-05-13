@@ -33,6 +33,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _internal_error_message(action: str) -> str:
+    """Return a sanitized error message for API responses."""
+    return f"Failed to {action}. Check server logs for details."
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: load config on startup, close websockets on shutdown."""
@@ -278,7 +283,10 @@ async def test_connection():
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Connection test failed: {e}")
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        return JSONResponse(
+            {"success": False, "error": _internal_error_message("test the connection")},
+            status_code=500,
+        )
 
 
 @app.get("/api/markets/trending")
@@ -302,7 +310,10 @@ async def get_trending_markets(limit: int = 10):
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Failed to get trending markets: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=_internal_error_message("fetch trending markets"),
+        )
 
 
 @app.get("/api/markets/search")
@@ -325,7 +336,10 @@ async def search_markets(q: str, limit: int = 20):
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=_internal_error_message("search markets"),
+        )
 
 
 @app.get("/api/markets/{market_id}")
@@ -347,7 +361,10 @@ async def get_market_details(market_id: str):
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Failed to get market details: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=_internal_error_message("fetch market details"),
+        )
 
 
 @app.get("/api/markets/{market_id}/analyze")
@@ -371,7 +388,10 @@ async def analyze_market(market_id: str):
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Market analysis failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=_internal_error_message("analyze the market"),
+        )
 
 
 @app.post("/api/config")
@@ -429,7 +449,10 @@ async def update_config(config_update: ConfigUpdateRequest):
     except Exception as e:
         stats["errors"] += 1
         logger.error(f"Config update failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=_internal_error_message("update configuration"),
+        )
 
 
 @app.get("/api/stats")

@@ -269,8 +269,11 @@ class WebSocketManager:
             auth_message = {
                 "auth": {
                     "apiKey": self.config.POLYMARKET_API_KEY,
-                    "secret": self.config.POLYMARKET_API_SECRET
-                    or self.config.POLYMARKET_PASSPHRASE,
+                    "secret": (
+                        self.config.POLYMARKET_API_SECRET
+                        if self.config.POLYMARKET_API_SECRET is not None
+                        else self.config.POLYMARKET_PASSPHRASE
+                    ),
                     "passphrase": self.config.POLYMARKET_PASSPHRASE,
                 }
             }
