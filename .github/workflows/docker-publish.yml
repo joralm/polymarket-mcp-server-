@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
 
     steps:
       - name: Checkout repository
@@ -85,7 +86,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy scan results
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.repository == 'joralm/polymarket-mcp-server-plus'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
