@@ -15,7 +15,9 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
-from starlette.routing import Mount
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.routing import Mount, Route, Router
 import uvicorn
 
 from .config import load_config, PolymarketConfig
@@ -491,8 +493,29 @@ async def main() -> None:
                 async with session_manager.run():
                     yield
 
-            app = Starlette(
-                routes=[Mount(path, app=streamable_http_app)],
+            async def health_check(request: Request) -> JSONResponse:
+                return JSONResponse({"status": "ok", "transport": "streamable-http"})
+
+            async def sse_not_supported(request: Request) -> PlainTextResponse:
+                return PlainTextResponse(
+                    f"SSE transport is not supported by this server.\n"
+                    f"Use streamable-http transport: send POST requests to {path}",
+                    status_code=501,
+                )
+
+            # Use Router with redirect_slashes=False so clients can POST to /mcp
+            # without being redirected to /mcp/ (a 307 redirect breaks many HTTP
+            # clients that won't forward POST bodies on redirect).
+            router = Router(
+                routes=[
+                    Route("/health", endpoint=health_check),
+                    Route("/healthz", endpoint=health_check),
+                    Route("/ping", endpoint=health_check),
+                    Route("/ready", endpoint=health_check),
+                    Route(path + "/sse", endpoint=sse_not_supported, methods=["GET", "POST"]),
+                    Mount(path, app=streamable_http_app),
+                ],
+                redirect_slashes=False,
                 lifespan=lifespan,
             )
 
@@ -503,7 +526,7 @@ async def main() -> None:
                 path,
             )
             uvicorn_server = uvicorn.Server(
-                uvicorn.Config(app, host=host, port=port, log_level="info")
+                uvicorn.Config(router, host=host, port=port, log_level="info")
             )
             await uvicorn_server.serve()
 
