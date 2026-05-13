@@ -83,6 +83,10 @@ def get_streamable_http_settings() -> tuple[str, int, str]:
         raise ValueError(
             f"Invalid MCP_STREAMABLE_HTTP_PORT '{raw_port}'. Use a valid integer port."
         ) from exc
+    if not (1 <= port <= 65535):
+        raise ValueError(
+            f"Invalid MCP_STREAMABLE_HTTP_PORT '{raw_port}'. Use a port between 1 and 65535."
+        )
     raw_path = os.getenv("MCP_STREAMABLE_HTTP_PATH", "/mcp").strip() or "/mcp"
     path = raw_path if raw_path.startswith("/") else f"/{raw_path}"
     return host, port, path
@@ -331,7 +335,7 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
             raise ValueError(f"Unknown tool: {name}")
 
     except Exception as e:
-        logger.error(f"Tool call failed: {name} - {e}")
+        logger.exception("Tool call failed: %s", name)
         error_result = {"success": False, "error": str(e), "tool": name, "arguments": arguments}
         return [types.TextContent(type="text", text=json.dumps(error_result, indent=2))]
 
@@ -384,7 +388,7 @@ async def initialize_server() -> None:
                 logger.debug(f"POLYMARKET_API_KEY={api_key[:8]}...")
                 logger.debug(f"POLYMARKET_PASSPHRASE={passphrase[:8]}...")
             except Exception as e:
-                logger.warning(f"Could not create API credentials: {e}")
+                logger.warning("Could not create API credentials: %s", e)
                 logger.info("Continuing in READ-ONLY mode")
                 logger.info("Available: Market Discovery (8 tools) + Market Analysis (10 tools)")
                 logger.info("Unavailable: Trading (12 tools) + Portfolio (8 tools)")
@@ -420,7 +424,7 @@ async def initialize_server() -> None:
                 await websocket_manager.connect()
                 await websocket_manager.start_background_task()
             except Exception as e:
-                logger.error(f"Failed to initialize WebSocket background task: {e}")
+                logger.exception("Failed to initialize WebSocket background task: %s", e)
 
         asyncio.create_task(_initialize_websocket_manager())
         logger.info("WebSocket manager initialized with 7 real-time tools")
@@ -440,7 +444,7 @@ async def initialize_server() -> None:
             logger.info("Trading and Portfolio tools require API credentials")
 
     except Exception as e:
-        logger.error(f"Failed to initialize server: {e}")
+        logger.exception("Failed to initialize server: %s", e)
         raise
 
 
@@ -450,9 +454,10 @@ async def main() -> None:
 
     Initializes components and runs the configured MCP transport.
     """
-    transport_mode = get_transport_mode()
-
     try:
+        transport_mode = get_transport_mode()
+        logger.info("Selected MCP transport: %s", transport_mode)
+
         if transport_mode == "stdio":
             # Initialize server components
             await initialize_server()
@@ -481,7 +486,12 @@ async def main() -> None:
                 lifespan=lifespan,
             )
 
-            logger.info(f"Starting MCP server (streamable-http) on http://{host}:{port}{path}")
+            logger.info(
+                "Starting MCP server (streamable-http) on http://%s:%s%s",
+                host,
+                port,
+                path,
+            )
             uvicorn_server = uvicorn.Server(
                 uvicorn.Config(app, host=host, port=port, log_level="info")
             )
@@ -490,7 +500,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     except Exception as e:
-        logger.error(f"Server error: {e}")
+        logger.exception("Server error: %s", e)
         raise
 
 

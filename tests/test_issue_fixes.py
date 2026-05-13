@@ -295,6 +295,66 @@ class TestStreamableHTTPTransport:
         assert port == 8000
         assert path == "/mcp"
 
+    def test_streamable_http_settings_reject_out_of_range_port(self):
+        """Streamable HTTP settings should reject ports outside the valid TCP range."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict("os.environ", {"MCP_STREAMABLE_HTTP_PORT": "70000"}, clear=True):
+            with pytest.raises(ValueError, match="between 1 and 65535"):
+                server_module.get_streamable_http_settings()
+
+
+class TestWebSocketRuntimeRobustness:
+    """Regression tests for websocket runtime safety checks."""
+
+    @pytest.mark.asyncio
+    async def test_listen_marks_clob_disconnected_when_socket_closed(self):
+        """Closed CLOB socket should force disconnected/auth state before returning."""
+        manager = WebSocketManager(
+            config=PolymarketConfig(
+                POLYGON_PRIVATE_KEY="0" * 64,
+                POLYGON_ADDRESS="0x" + "0" * 40,
+            )
+        )
+        manager.should_run = True
+        manager.clob_connected = True
+        manager.authenticated = True
+        manager.clob_ws = MagicMock(closed=True)
+
+        await manager._listen_to_websocket("clob")
+
+        assert manager.clob_connected is False
+        assert manager.authenticated is False
+
+    @pytest.mark.asyncio
+    async def test_listen_rejects_unknown_channel(self):
+        """Unknown listener channel should raise to avoid silent misrouting."""
+        manager = WebSocketManager(
+            config=PolymarketConfig(
+                POLYGON_PRIVATE_KEY="0" * 64,
+                POLYGON_ADDRESS="0x" + "0" * 40,
+            )
+        )
+        manager.should_run = True
+
+        with pytest.raises(ValueError, match="Unknown websocket channel"):
+            await manager._listen_to_websocket("invalid-channel")  # type: ignore[arg-type]
+
+    def test_connections_healthy_requires_both_open_channels(self):
+        """Health check should fail when either websocket channel is closed."""
+        manager = WebSocketManager(
+            config=PolymarketConfig(
+                POLYGON_PRIVATE_KEY="0" * 64,
+                POLYGON_ADDRESS="0x" + "0" * 40,
+            )
+        )
+        manager.clob_connected = True
+        manager.realtime_connected = True
+        manager.clob_ws = MagicMock(closed=False)
+        manager.realtime_ws = MagicMock(closed=True)
+
+        assert manager._connections_healthy() is False
+
 
 class TestCriticalRuntimeFixes:
     """Regression tests for portfolio and realtime issue fixes."""

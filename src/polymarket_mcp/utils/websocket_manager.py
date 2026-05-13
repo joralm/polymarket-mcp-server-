@@ -16,7 +16,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 from enum import Enum
 
 import websockets
@@ -143,6 +143,7 @@ class WebSocketManager:
     INITIAL_RECONNECT_DELAY = 1  # seconds
     MAX_RECONNECT_DELAY = 60  # seconds
     RECONNECT_MULTIPLIER = 2
+    MESSAGE_POLL_INTERVAL_SECONDS = 0.05
 
     def __init__(
         self,
@@ -803,7 +804,7 @@ class WebSocketManager:
         while self.should_run:
             try:
                 # Ensure connections are active
-                if not self.clob_connected or not self.realtime_connected:
+                if not self._connections_healthy():
                     await self.reconnect()
                     continue
 
@@ -837,19 +838,32 @@ class WebSocketManager:
 
         logger.info("Background WebSocket loop stopped")
 
-    async def _listen_to_websocket(self, channel: str) -> None:
+    async def _listen_to_websocket(self, channel: Literal["clob", "realtime"]) -> None:
         """Continuously receive messages from a single websocket channel."""
         while self.should_run:
             if channel == "clob":
                 if not self.clob_ws or self.clob_ws.closed:
+                    self.clob_connected = False
+                    self.authenticated = False
                     return
                 await self._receive_clob_messages()
-                await asyncio.sleep(0.01)
-            else:
+                await asyncio.sleep(self.MESSAGE_POLL_INTERVAL_SECONDS)
+            elif channel == "realtime":
                 if not self.realtime_ws or self.realtime_ws.closed:
+                    self.realtime_connected = False
                     return
                 await self._receive_realtime_messages()
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(self.MESSAGE_POLL_INTERVAL_SECONDS)
+            else:
+                raise ValueError(f"Unknown websocket channel: {channel}")
+
+    def _connections_healthy(self) -> bool:
+        """Return True when both websocket channels are connected and open."""
+        clob_healthy = self.clob_connected and self.clob_ws is not None and not self.clob_ws.closed
+        realtime_healthy = (
+            self.realtime_connected and self.realtime_ws is not None and not self.realtime_ws.closed
+        )
+        return clob_healthy and realtime_healthy
 
     async def _receive_clob_messages(self) -> None:
         """Receive messages from CLOB WebSocket"""
