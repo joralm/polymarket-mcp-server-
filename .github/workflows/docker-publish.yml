@@ -12,6 +12,7 @@ on:
       - main
   release:
     types: [published]
+  workflow_dispatch:   # ← permite correr manualmente
 
 env:
   REGISTRY: ghcr.io
