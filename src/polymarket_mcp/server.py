@@ -15,7 +15,7 @@ import mcp.types as types
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import Mount
 import uvicorn
 
 from .config import load_config, PolymarketConfig
@@ -471,7 +471,7 @@ async def main() -> None:
                     yield
 
             app = Starlette(
-                routes=[Route(path, endpoint=streamable_http_app)],
+                routes=[Mount(path, app=streamable_http_app)],
                 lifespan=lifespan,
             )
 
