@@ -81,6 +81,11 @@ class PolymarketConfig(BaseSettings):
         default="https://gamma-api.polymarket.com", description="Gamma API endpoint for market data"
     )
 
+    # WebSocket Controls
+    WS_ENABLED: bool = Field(
+        default=True, description="Enable WebSocket realtime features and background connections"
+    )
+
     # Logging
     LOG_LEVEL: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
 

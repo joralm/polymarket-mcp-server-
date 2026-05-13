@@ -24,6 +24,7 @@ services:
       # Configuration
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - POLYMARKET_CHAIN_ID=${POLYMARKET_CHAIN_ID:-137}
+      - WS_ENABLED=${WS_ENABLED:-true}
 
       # Safety limits (optional overrides)
       - MAX_ORDER_SIZE_USD=${MAX_ORDER_SIZE_USD:-1000}
