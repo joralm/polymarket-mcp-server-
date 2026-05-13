@@ -398,6 +398,62 @@ class TestCriticalRuntimeFixes:
             server_module.config = original_config
 
     @pytest.mark.asyncio
+    async def test_server_uses_passphrase_as_api_secret_fallback(self):
+        """Server initialization should keep legacy passphrase-only auth working."""
+        import polymarket_mcp.server as server_module
+
+        original_config = server_module.config
+        original_polymarket_client = server_module.polymarket_client
+        original_safety_limits = server_module.safety_limits
+        original_rate_limiter = server_module.rate_limiter
+        original_trading_tools = server_module.trading_tools
+        original_websocket_manager = server_module.websocket_manager
+
+        fake_config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_API_KEY="legacy-key",
+            POLYMARKET_API_SECRET=None,
+            POLYMARKET_PASSPHRASE="legacy-passphrase",
+            POLYMARKET_API_KEY_NAME="legacy-name",
+        )
+
+        fake_client = MagicMock()
+        fake_client.has_api_credentials.return_value = False
+        fake_client.create_api_credentials = AsyncMock(
+            side_effect=RuntimeError("skip credential creation")
+        )
+        fake_manager = MagicMock()
+        fake_manager.connect = AsyncMock()
+        fake_manager.start_background_task = AsyncMock()
+
+        try:
+            with (
+                patch.object(server_module, "load_config", return_value=fake_config),
+                patch.object(
+                    server_module, "create_polymarket_client", return_value=fake_client
+                ) as mock_create_client,
+                patch.object(
+                    server_module, "create_safety_limits_from_config", return_value=MagicMock()
+                ),
+                patch.object(server_module, "get_rate_limiter", return_value=MagicMock()),
+                patch.object(server_module, "WebSocketManager", return_value=fake_manager),
+                patch.object(server_module.realtime, "set_websocket_manager"),
+                patch.object(server_module.asyncio, "create_task", return_value=MagicMock()),
+            ):
+                await server_module.initialize_server()
+
+            assert mock_create_client.call_count == 1
+            assert mock_create_client.call_args.kwargs["api_secret"] == "legacy-passphrase"
+        finally:
+            server_module.config = original_config
+            server_module.polymarket_client = original_polymarket_client
+            server_module.safety_limits = original_safety_limits
+            server_module.rate_limiter = original_rate_limiter
+            server_module.trading_tools = original_trading_tools
+            server_module.websocket_manager = original_websocket_manager
+
+    @pytest.mark.asyncio
     async def test_server_routes_realtime_calls_through_registered_manager(self):
         """Realtime calls should delegate to the realtime tool handler without a missing attribute error."""
         import polymarket_mcp.server as server_module

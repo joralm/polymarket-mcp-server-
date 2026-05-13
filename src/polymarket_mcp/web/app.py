@@ -114,7 +114,7 @@ async def load_mcp_config():
             address=config.POLYGON_ADDRESS,
             chain_id=config.POLYMARKET_CHAIN_ID,
             api_key=config.POLYMARKET_API_KEY,
-            api_secret=config.POLYMARKET_API_SECRET,
+            api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
             passphrase=config.POLYMARKET_PASSPHRASE,
         )
 
