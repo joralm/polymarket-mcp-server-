@@ -231,6 +231,8 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
             "analyze_portfolio_risk",
             "suggest_portfolio_actions",
         ]:
+            if not rate_limiter:
+                raise ValueError("Rate limiter not initialized")
             return await portfolio_integration.call_portfolio_tool(
                 name, arguments, polymarket_client, rate_limiter, config
             )
@@ -369,8 +371,11 @@ async def initialize_server() -> None:
         realtime.set_websocket_manager(websocket_manager)
 
         async def _initialize_websocket_manager() -> None:
-            await websocket_manager.connect()
-            await websocket_manager.start_background_task()
+            try:
+                await websocket_manager.connect()
+                await websocket_manager.start_background_task()
+            except Exception as e:
+                logger.error(f"Failed to initialize WebSocket background task: {e}")
 
         asyncio.create_task(_initialize_websocket_manager())
         logger.info("WebSocket manager initialized with 7 real-time tools")

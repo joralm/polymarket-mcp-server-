@@ -275,6 +275,8 @@ class TestCriticalRuntimeFixes:
         """Server init should register realtime manager and start the background loop."""
         import polymarket_mcp.server as server_module
 
+        call_order = []
+
         fake_config = MagicMock()
         fake_config.POLYGON_PRIVATE_KEY = "0" * 64
         fake_config.POLYGON_ADDRESS = "0x" + "0" * 40
@@ -289,8 +291,10 @@ class TestCriticalRuntimeFixes:
         fake_client.create_api_credentials = AsyncMock(side_effect=RuntimeError("skip"))
 
         fake_manager = MagicMock()
-        fake_manager.connect = AsyncMock()
-        fake_manager.start_background_task = AsyncMock()
+        fake_manager.connect = AsyncMock(side_effect=lambda: call_order.append("connect"))
+        fake_manager.start_background_task = AsyncMock(
+            side_effect=lambda: call_order.append("start_background_task")
+        )
 
         scheduled = []
 
@@ -314,6 +318,7 @@ class TestCriticalRuntimeFixes:
         await scheduled[0]
         fake_manager.connect.assert_awaited_once()
         fake_manager.start_background_task.assert_awaited_once()
+        assert call_order == ["connect", "start_background_task"]
 
     @pytest.mark.asyncio
     async def test_websocket_auth_uses_secret_and_passphrase(self):
