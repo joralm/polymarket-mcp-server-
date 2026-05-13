@@ -58,8 +58,9 @@ class PolymarketClient:
         self.api_creds: Optional[ApiCreds] = None
         if api_key and (api_secret or passphrase):
             secret = api_secret or passphrase
-            # Some setups only provide the secret; fall back to it when a separate
-            # passphrase is unavailable so older environments keep working.
+            # Prefer the explicit passphrase when present, but fall back to the
+            # secret for backward compatibility with older environments that only
+            # persisted a single credential value.
             auth_passphrase = passphrase if passphrase is not None else secret
             self.api_creds = ApiCreds(
                 api_key=api_key, api_secret=secret, api_passphrase=auth_passphrase
