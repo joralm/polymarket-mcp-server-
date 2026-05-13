@@ -244,6 +244,25 @@ REQUIRE_CONFIRMATION_ABOVE_USD=500
 
 ---
 
+## MCP Transport
+
+The server defaults to **Streamable HTTP** transport:
+
+```bash
+MCP_TRANSPORT=streamable-http
+MCP_STREAMABLE_HTTP_HOST=0.0.0.0
+MCP_STREAMABLE_HTTP_PORT=8000
+MCP_STREAMABLE_HTTP_PATH=/mcp
+```
+
+For Claude Desktop local integration, keep using stdio:
+
+```bash
+MCP_TRANSPORT=stdio
+```
+
+---
+
 ## Claude Desktop Integration
 
 ### Automatic Configuration
@@ -272,7 +291,8 @@ If you need to configure manually:
       "args": ["-m", "polymarket_mcp.server"],
       "cwd": "/path/to/polymarket-mcp-server",
       "env": {
-        "DEMO_MODE": "true"
+        "DEMO_MODE": "true",
+        "MCP_TRANSPORT": "stdio"
       }
     }
   }
