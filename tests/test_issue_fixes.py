@@ -237,6 +237,13 @@ class TestStreamableHTTPTransport:
         with patch.dict("os.environ", {"MCP_TRANSPORT": "STDIO"}, clear=True):
             assert server_module.get_transport_mode() == "stdio"
 
+    def test_transport_mode_accepts_explicit_streamable_http(self):
+        """Transport mode parser should accept explicit streamable-http values."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict("os.environ", {"MCP_TRANSPORT": "streamable-http"}, clear=True):
+            assert server_module.get_transport_mode() == "streamable-http"
+
     def test_transport_mode_rejects_invalid_value(self):
         """Transport mode parser should reject unsupported values."""
         import polymarket_mcp.server as server_module
@@ -264,6 +271,19 @@ class TestStreamableHTTPTransport:
         assert port == 9001
         assert path == "/custom-mcp"
 
+    def test_streamable_http_settings_keep_existing_slash(self):
+        """Streamable HTTP path should preserve an already-normalized leading slash."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict(
+            "os.environ",
+            {"MCP_STREAMABLE_HTTP_PATH": "/already-normalized"},
+            clear=True,
+        ):
+            _, _, path = server_module.get_streamable_http_settings()
+
+        assert path == "/already-normalized"
+
     def test_streamable_http_settings_use_defaults_when_unset(self):
         """Streamable HTTP settings should return defaults when unset."""
         import polymarket_mcp.server as server_module
@@ -284,47 +304,63 @@ class TestCriticalRuntimeFixes:
         """Portfolio tools should receive the rate limiter, not safety limits."""
         import polymarket_mcp.server as server_module
 
-        server_module.polymarket_client = MagicMock()
-        server_module.rate_limiter = MagicMock()
-        server_module.safety_limits = MagicMock()
-        server_module.config = MagicMock()
+        original_polymarket_client = server_module.polymarket_client
+        original_rate_limiter = server_module.rate_limiter
+        original_safety_limits = server_module.safety_limits
+        original_config = server_module.config
 
-        with patch.object(
-            server_module.portfolio_integration,
-            "call_portfolio_tool",
-            new_callable=AsyncMock,
-        ) as mock_call:
-            mock_call.return_value = []
+        try:
+            server_module.polymarket_client = MagicMock()
+            server_module.rate_limiter = MagicMock()
+            server_module.safety_limits = MagicMock()
+            server_module.config = MagicMock()
 
-            await server_module.call_tool("get_all_positions", {})
+            with patch.object(
+                server_module.portfolio_integration,
+                "call_portfolio_tool",
+                new_callable=AsyncMock,
+            ) as mock_call:
+                mock_call.return_value = []
 
-        mock_call.assert_awaited_once_with(
-            "get_all_positions",
-            {},
-            server_module.polymarket_client,
-            server_module.rate_limiter,
-            server_module.config,
-        )
+                await server_module.call_tool("get_all_positions", {})
+
+            mock_call.assert_awaited_once_with(
+                "get_all_positions",
+                {},
+                server_module.polymarket_client,
+                server_module.rate_limiter,
+                server_module.config,
+            )
+        finally:
+            server_module.polymarket_client = original_polymarket_client
+            server_module.rate_limiter = original_rate_limiter
+            server_module.safety_limits = original_safety_limits
+            server_module.config = original_config
 
     @pytest.mark.asyncio
     async def test_server_routes_realtime_calls_through_registered_manager(self):
         """Realtime calls should delegate to the realtime tool handler without a missing attribute error."""
         import polymarket_mcp.server as server_module
 
-        server_module.websocket_manager = MagicMock()
+        original_websocket_manager = server_module.websocket_manager
 
-        with patch.object(
-            server_module.realtime,
-            "handle_tool_call",
-            new_callable=AsyncMock,
-        ) as mock_handle:
-            expected = [MagicMock()]
-            mock_handle.return_value = expected
+        try:
+            server_module.websocket_manager = MagicMock()
 
-            result = await server_module.call_tool("get_realtime_status", {})
+            with patch.object(
+                server_module.realtime,
+                "handle_tool_call",
+                new_callable=AsyncMock,
+            ) as mock_handle:
+                expected = [MagicMock()]
+                mock_handle.return_value = expected
 
-        assert result is expected
-        mock_handle.assert_awaited_once_with("get_realtime_status", {})
+                result = await server_module.call_tool("get_realtime_status", {})
+
+            assert result is expected
+            mock_handle.assert_awaited_once_with("get_realtime_status", {})
+        finally:
+            server_module.websocket_manager = original_websocket_manager
 
     @pytest.mark.asyncio
     async def test_initialize_server_registers_and_starts_websocket_manager(self):

@@ -76,7 +76,13 @@ def get_transport_mode() -> str:
 def get_streamable_http_settings() -> tuple[str, int, str]:
     """Get Streamable HTTP host, port, and endpoint path from environment."""
     host = os.getenv("MCP_STREAMABLE_HTTP_HOST", "0.0.0.0").strip() or "0.0.0.0"
-    port = int(os.getenv("MCP_STREAMABLE_HTTP_PORT", "8000"))
+    raw_port = os.getenv("MCP_STREAMABLE_HTTP_PORT", "8000")
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid MCP_STREAMABLE_HTTP_PORT '{raw_port}'. Use a valid integer port."
+        ) from exc
     raw_path = os.getenv("MCP_STREAMABLE_HTTP_PATH", "/mcp").strip() or "/mcp"
     path = raw_path if raw_path.startswith("/") else f"/{raw_path}"
     return host, port, path
