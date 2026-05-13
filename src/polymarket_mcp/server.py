@@ -123,8 +123,12 @@ async def list_tools() -> list[types.Tool]:
     else:
         logger.info("Trading and Portfolio tools disabled (no API credentials - read-only mode)")
 
-    # Real-time tools (partial functionality without auth)
-    tools.extend(realtime.get_tools())
+    # Real-time tools can be disabled via WS_ENABLED
+    websocket_enabled = config.WS_ENABLED if config else True
+    if websocket_enabled:
+        tools.extend(realtime.get_tools())
+    else:
+        logger.info("Real-time tools disabled (WS_ENABLED=false)")
 
     return tools
 
@@ -296,6 +300,8 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
             "get_realtime_status",
             "unsubscribe_realtime",
         ]:
+            if config and not config.WS_ENABLED:
+                raise ValueError("WebSocket features are disabled (WS_ENABLED=false)")
             if not websocket_manager:
                 raise ValueError("WebSocket manager not initialized")
             return await realtime.handle_tool_call(name, arguments)
@@ -414,20 +420,24 @@ async def initialize_server() -> None:
         else:
             logger.info("Trading tools NOT initialized (no API credentials - read-only mode)")
 
-        # Initialize WebSocket manager
-        logger.info("Initializing WebSocket manager...")
-        websocket_manager = WebSocketManager(config)
-        realtime.set_websocket_manager(websocket_manager)
+        websocket_manager = None
+        if config.WS_ENABLED:
+            # Initialize WebSocket manager
+            logger.info("Initializing WebSocket manager...")
+            websocket_manager = WebSocketManager(config)
+            realtime.set_websocket_manager(websocket_manager)
 
-        async def _initialize_websocket_manager() -> None:
-            try:
-                await websocket_manager.connect()
-                await websocket_manager.start_background_task()
-            except Exception as e:
-                logger.exception("Failed to initialize WebSocket background task: %s", e)
+            async def _initialize_websocket_manager() -> None:
+                try:
+                    await websocket_manager.connect()
+                    await websocket_manager.start_background_task()
+                except Exception as e:
+                    logger.exception("Failed to initialize WebSocket background task: %s", e)
 
-        asyncio.create_task(_initialize_websocket_manager())
-        logger.info("WebSocket manager initialized with 7 real-time tools")
+            asyncio.create_task(_initialize_websocket_manager())
+            logger.info("WebSocket manager initialized with 7 real-time tools")
+        else:
+            logger.info("WebSocket manager disabled (WS_ENABLED=false)")
 
         logger.info("Server initialization complete!")
         logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")

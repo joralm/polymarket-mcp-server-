@@ -646,3 +646,74 @@ class TestCriticalRuntimeFixes:
             call_args = mock_fetch.call_args
             params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("params", {})
             assert params.get("closed") == "false"
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_skips_websocket_manager_when_disabled(self):
+        """Server init must not create websocket connections when WS_ENABLED=false."""
+        import polymarket_mcp.server as server_module
+
+        original_config = server_module.config
+        original_polymarket_client = server_module.polymarket_client
+        original_safety_limits = server_module.safety_limits
+        original_rate_limiter = server_module.rate_limiter
+        original_trading_tools = server_module.trading_tools
+        original_websocket_manager = server_module.websocket_manager
+
+        fake_config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            WS_ENABLED=False,
+        )
+
+        fake_client = MagicMock()
+        fake_client.has_api_credentials.return_value = False
+        fake_client.create_api_credentials = AsyncMock(side_effect=RuntimeError("skip"))
+
+        try:
+            with (
+                patch.object(server_module, "load_config", return_value=fake_config),
+                patch.object(server_module, "create_polymarket_client", return_value=fake_client),
+                patch.object(server_module, "create_safety_limits_from_config", return_value=MagicMock()),
+                patch.object(server_module, "get_rate_limiter", return_value=MagicMock()),
+                patch.object(server_module, "WebSocketManager") as mock_ws_manager,
+                patch.object(server_module.realtime, "set_websocket_manager") as mock_set_manager,
+                patch.object(server_module.asyncio, "create_task") as mock_create_task,
+            ):
+                await server_module.initialize_server()
+
+            mock_ws_manager.assert_not_called()
+            mock_set_manager.assert_not_called()
+            mock_create_task.assert_not_called()
+            assert server_module.websocket_manager is None
+        finally:
+            server_module.config = original_config
+            server_module.polymarket_client = original_polymarket_client
+            server_module.safety_limits = original_safety_limits
+            server_module.rate_limiter = original_rate_limiter
+            server_module.trading_tools = original_trading_tools
+            server_module.websocket_manager = original_websocket_manager
+
+    @pytest.mark.asyncio
+    async def test_list_tools_omits_realtime_tools_when_disabled(self):
+        """Tool listing must exclude realtime tools when WS_ENABLED=false."""
+        import polymarket_mcp.server as server_module
+
+        original_config = server_module.config
+        original_polymarket_client = server_module.polymarket_client
+
+        try:
+            server_module.config = MagicMock(WS_ENABLED=False)
+            server_module.polymarket_client = None
+
+            with (
+                patch.object(server_module.market_discovery, "get_tools", return_value=[]),
+                patch.object(server_module.market_analysis, "get_tools", return_value=[]),
+                patch.object(server_module.realtime, "get_tools", return_value=[MagicMock()]) as mock_realtime,
+            ):
+                tools = await server_module.list_tools()
+
+            mock_realtime.assert_not_called()
+            assert tools == []
+        finally:
+            server_module.config = original_config
+            server_module.polymarket_client = original_polymarket_client
