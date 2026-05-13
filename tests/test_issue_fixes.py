@@ -265,10 +265,10 @@ class TestCriticalRuntimeFixes:
         """Portfolio tools should receive the rate limiter, not safety limits."""
         import polymarket_mcp.server as server_module
 
-        server_module.polymarket_client = object()
-        server_module.rate_limiter = object()
-        server_module.safety_limits = object()
-        server_module.config = object()
+        server_module.polymarket_client = MagicMock()
+        server_module.rate_limiter = MagicMock()
+        server_module.safety_limits = MagicMock()
+        server_module.config = MagicMock()
 
         with patch.object(
             server_module.portfolio_integration,
@@ -292,7 +292,7 @@ class TestCriticalRuntimeFixes:
         """Realtime calls should delegate to the realtime tool handler without a missing attribute error."""
         import polymarket_mcp.server as server_module
 
-        server_module.websocket_manager = object()
+        server_module.websocket_manager = MagicMock()
 
         with patch.object(
             server_module.realtime,

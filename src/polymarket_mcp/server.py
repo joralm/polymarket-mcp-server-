@@ -67,7 +67,8 @@ def get_transport_mode() -> str:
     normalized = raw.replace("_", "-")
     if normalized not in {"streamable-http", "stdio"}:
         raise ValueError(
-            "Invalid MCP_TRANSPORT value. Use 'streamable-http' (or 'streamable_http') or 'stdio'."
+            "Invalid MCP_TRANSPORT value. Use 'streamable-http' or 'stdio' "
+            "(underscores are normalized automatically)."
         )
     return normalized
 
