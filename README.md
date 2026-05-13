@@ -269,6 +269,25 @@ Add to your Claude Desktop configuration file:
 }
 ```
 
+### MCP Transport (Streamable HTTP)
+
+The server now defaults to **Streamable HTTP** transport.
+
+```bash
+# Defaults:
+# MCP_TRANSPORT=streamable-http
+# MCP_STREAMABLE_HTTP_HOST=0.0.0.0
+# MCP_STREAMABLE_HTTP_PORT=8000
+# MCP_STREAMABLE_HTTP_PATH=/mcp
+polymarket-mcp
+```
+
+To keep Claude Desktop stdio behavior, set:
+
+```bash
+MCP_TRANSPORT=stdio
+```
+
 **Restart Claude Desktop** and you're ready to trade! 🎉
 
 ---

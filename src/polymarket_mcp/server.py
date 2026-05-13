@@ -6,11 +6,17 @@ Provides MCP server for Polymarket trading integration with Claude Desktop.
 
 import asyncio
 import logging
+import os
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.applications import Starlette
+from starlette.routing import Route
+import uvicorn
 
 from .config import load_config, PolymarketConfig
 from .auth import PolymarketClient, create_polymarket_client
@@ -43,6 +49,34 @@ safety_limits: Optional[SafetyLimits] = None
 rate_limiter = None
 trading_tools: Optional[TradingTools] = None
 websocket_manager: Optional[WebSocketManager] = None
+
+
+class StreamableHTTPASGIApp:
+    """ASGI adapter for MCP Streamable HTTP transport."""
+
+    def __init__(self, session_manager: StreamableHTTPSessionManager):
+        self.session_manager = session_manager
+
+    async def __call__(self, scope, receive, send) -> None:
+        await self.session_manager.handle_request(scope, receive, send)
+
+
+def get_transport_mode() -> str:
+    """Get MCP transport mode from environment."""
+    raw = os.getenv("MCP_TRANSPORT", "streamable-http").strip().lower()
+    normalized = raw.replace("_", "-")
+    if normalized not in {"streamable-http", "stdio"}:
+        raise ValueError("Invalid MCP_TRANSPORT value. Use 'streamable-http' or 'stdio'.")
+    return normalized
+
+
+def get_streamable_http_settings() -> tuple[str, int, str]:
+    """Get Streamable HTTP host, port, and endpoint path from environment."""
+    host = os.getenv("MCP_STREAMABLE_HTTP_HOST", "0.0.0.0").strip() or "0.0.0.0"
+    port = int(os.getenv("MCP_STREAMABLE_HTTP_PORT", "8000"))
+    raw_path = os.getenv("MCP_STREAMABLE_HTTP_PATH", "/mcp").strip() or "/mcp"
+    path = raw_path if raw_path.startswith("/") else f"/{raw_path}"
+    return host, port, path
 
 
 @server.list_tools()
@@ -405,16 +439,44 @@ async def main() -> None:
     """
     Main entry point for MCP server.
 
-    Initializes all components and runs the stdio-based MCP server.
+    Initializes components and runs the configured MCP transport.
     """
-    try:
-        # Initialize server components
-        await initialize_server()
+    transport_mode = get_transport_mode()
 
-        # Run MCP server with stdio transport
-        logger.info("Starting MCP server...")
-        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream, server.create_initialization_options())
+    try:
+        if transport_mode == "stdio":
+            # Initialize server components
+            await initialize_server()
+
+            # Run MCP server with stdio transport
+            logger.info("Starting MCP server (stdio transport)...")
+            async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+                await server.run(
+                    read_stream,
+                    write_stream,
+                    server.create_initialization_options(),
+                )
+        else:
+            host, port, path = get_streamable_http_settings()
+            session_manager = StreamableHTTPSessionManager(app=server)
+            streamable_http_app = StreamableHTTPASGIApp(session_manager)
+
+            @asynccontextmanager
+            async def lifespan(app: Starlette):
+                await initialize_server()
+                async with session_manager.run():
+                    yield
+
+            app = Starlette(
+                routes=[Route(path, endpoint=streamable_http_app)],
+                lifespan=lifespan,
+            )
+
+            logger.info(f"Starting MCP server (streamable-http) on http://{host}:{port}{path}")
+            uvicorn_server = uvicorn.Server(
+                uvicorn.Config(app, host=host, port=port, log_level="info")
+            )
+            await uvicorn_server.serve()
 
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

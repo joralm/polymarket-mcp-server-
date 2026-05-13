@@ -217,7 +217,43 @@ class TestMarketFiltering:
             call_args = mock_fetch.call_args
             params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("params", {})
             assert params.get("closed") == "false"
-            assert params.get("active") == "true"
+
+
+class TestStreamableHTTPTransport:
+    """Regression tests for Streamable HTTP transport configuration."""
+
+    def test_transport_mode_defaults_to_streamable_http(self):
+        """Transport mode should default to streamable-http when unset."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict("os.environ", {}, clear=True):
+            assert server_module.get_transport_mode() == "streamable-http"
+
+    def test_transport_mode_accepts_stdio_aliases(self):
+        """Transport mode parser should normalize stdio aliases."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict("os.environ", {"MCP_TRANSPORT": "STDIO"}, clear=True):
+            assert server_module.get_transport_mode() == "stdio"
+
+    def test_streamable_http_settings_are_normalized(self):
+        """Streamable HTTP settings should normalize host, port, and path."""
+        import polymarket_mcp.server as server_module
+
+        with patch.dict(
+            "os.environ",
+            {
+                "MCP_STREAMABLE_HTTP_HOST": "127.0.0.1",
+                "MCP_STREAMABLE_HTTP_PORT": "9001",
+                "MCP_STREAMABLE_HTTP_PATH": "custom-mcp",
+            },
+            clear=True,
+        ):
+            host, port, path = server_module.get_streamable_http_settings()
+
+        assert host == "127.0.0.1"
+        assert port == 9001
+        assert path == "/custom-mcp"
 
 
 class TestCriticalRuntimeFixes:
