@@ -844,11 +844,12 @@ class WebSocketManager:
                 if not self.clob_ws or self.clob_ws.closed:
                     return
                 await self._receive_clob_messages()
+                await asyncio.sleep(0.01)
             else:
                 if not self.realtime_ws or self.realtime_ws.closed:
                     return
                 await self._receive_realtime_messages()
-            await asyncio.sleep(0.01)
+                await asyncio.sleep(0.01)
 
     async def _receive_clob_messages(self) -> None:
         """Receive messages from CLOB WebSocket"""

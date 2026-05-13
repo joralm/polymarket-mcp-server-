@@ -343,6 +343,28 @@ class TestCriticalRuntimeFixes:
         assert data["auth"]["passphrase"] == "test-passphrase"
 
     @pytest.mark.asyncio
+    async def test_websocket_auth_falls_back_to_passphrase_secret(self):
+        """WebSocket auth should keep working when only the legacy passphrase is configured."""
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_API_KEY="test-key",
+            POLYMARKET_API_SECRET=None,
+            POLYMARKET_PASSPHRASE="legacy-secret",
+            POLYMARKET_API_KEY_NAME="test-name",
+        )
+        manager = WebSocketManager(config=config)
+        manager.clob_ws = AsyncMock()
+        manager.clob_ws.recv = AsyncMock(return_value='{"type":"authenticated"}')
+
+        await manager._authenticate_clob()
+
+        payload = manager.clob_ws.send.await_args.args[0]
+        data = json.loads(payload)
+        assert data["auth"]["secret"] == "legacy-secret"
+        assert data["auth"]["passphrase"] == "legacy-secret"
+
+    @pytest.mark.asyncio
     async def test_closing_soon_sends_closed_false(self):
         """get_closing_soon_markets must include closed=false."""
         from polymarket_mcp.tools import market_discovery
