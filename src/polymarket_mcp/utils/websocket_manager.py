@@ -16,7 +16,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from enum import Enum
 
 import websockets
@@ -838,7 +838,7 @@ class WebSocketManager:
 
         logger.info("Background WebSocket loop stopped")
 
-    async def _listen_to_websocket(self, channel: Literal["clob", "realtime"]) -> None:
+    async def _listen_to_websocket(self, channel: str) -> None:
         """Continuously receive messages from a single websocket channel."""
         while self.should_run:
             if channel == "clob":
