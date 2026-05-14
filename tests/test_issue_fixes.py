@@ -11,7 +11,7 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
-from py_clob_client_v2.clob_types import AssetType, OrderBookSummary, OrderSummary
+from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
 from polymarket_mcp.tools.trading import TradingTools
@@ -747,6 +747,87 @@ class TestSDKCompatibility:
 
         assert float(orderbook["bids"][0]["price"]) == 0.58
         assert float(orderbook["asks"][0]["price"]) == 0.59
+
+    @pytest.mark.asyncio
+    async def test_get_balance_auto_refreshes_on_401(self):
+        """get_balance() must re-derive API credentials and retry when it receives HTTP 401.
+
+        Regression test for the observed failure:
+          'Unauthorized/Invalid api key' (status 401) returned by balance-allowance endpoint
+        when the stored API key in env vars is stale.
+        """
+        from py_clob_client_v2.exceptions import PolyApiException
+        import httpx
+
+        client = self._build_client()
+
+        call_count = 0
+        refreshed = False
+
+        class FakeResponse:
+            status_code = 401
+            def json(self):
+                return {"error": "Unauthorized/Invalid api key"}
+
+        class BalanceAllowanceClient:
+            def get_balance_allowance(self_, params):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    # Simulate stale key returning 401 on first call
+                    raise PolyApiException(resp=FakeResponse())
+                # Second call (after refresh) succeeds
+                return {"available": "50.0", "allowance": "1000"}
+
+            def create_or_derive_api_key(self_):
+                nonlocal refreshed
+                refreshed = True
+                return ApiCreds(
+                    api_key="refreshed-api-key",
+                    api_secret="refreshed-secret",
+                    api_passphrase="refreshed-passphrase",
+                )
+
+            def set_api_creds(self_, creds):
+                pass
+
+        client.client = BalanceAllowanceClient()
+        balance = await client.get_balance()
+
+        assert refreshed, "Credentials should have been refreshed on 401"
+        assert call_count == 2, f"Balance should have been called twice (got {call_count})"
+        assert balance["available"] == "50.0"
+        assert balance["balance"] == "50.0"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_does_not_retry_on_non_401_error(self):
+        """get_balance() must NOT attempt credential refresh for non-401 errors."""
+        from py_clob_client_v2.exceptions import PolyApiException
+
+        client = self._build_client()
+
+        call_count = 0
+
+        class FakeResponse403:
+            status_code = 403
+            def json(self):
+                return {"error": "Forbidden"}
+
+        class FailingClient:
+            def get_balance_allowance(self_, params):
+                nonlocal call_count
+                call_count += 1
+                raise PolyApiException(resp=FakeResponse403())
+
+            def create_or_derive_api_key(self_):
+                pytest.fail("create_or_derive_api_key should not be called for non-401 errors")
+
+        client.client = FailingClient()
+        with pytest.raises(PolyApiException) as exc_info:
+            await client.get_balance()
+
+        assert exc_info.value.status_code == 403
+        assert call_count == 1, "Should not retry on non-401 errors"
 
 
 class TestMarketAnalysisIdentifierCompatibility:
