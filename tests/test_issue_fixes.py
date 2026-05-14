@@ -675,6 +675,79 @@ class TestSDKCompatibility:
         assert orderbook["bids"][0]["price"] == "0.51"
         assert orderbook["asks"][0]["price"] == "0.52"
 
+    @pytest.mark.asyncio
+    async def test_get_orderbook_sorts_bids_desc_asks_asc(self):
+        """Orderbook bids must be sorted highest-first and asks lowest-first.
+
+        Regression test for the bug where asks[0] returned the *worst* (highest)
+        ask price instead of the best (lowest) one, causing best_ask=0.99 for a
+        YES token genuinely priced around 0.59.
+        """
+        client = self._build_client()
+
+        class OrderBookClient:
+            def get_order_book(self, token_id):
+                # Simulate API response with asks in descending order (worst first)
+                # and bids in ascending order (worst first) — the problematic case.
+                return OrderBookSummary(
+                    market="m1",
+                    asset_id="a1",
+                    bids=[
+                        OrderSummary(price="0.01", size="5"),   # worst bid first
+                        OrderSummary(price="0.57", size="100"),
+                        OrderSummary(price="0.58", size="200"),  # best bid last
+                    ],
+                    asks=[
+                        OrderSummary(price="0.99", size="5"),   # worst ask first
+                        OrderSummary(price="0.61", size="100"),
+                        OrderSummary(price="0.59", size="200"),  # best ask last
+                    ],
+                )
+
+        client.client = OrderBookClient()
+        orderbook = await client.get_orderbook("token-123")
+
+        bids = orderbook["bids"]
+        asks = orderbook["asks"]
+
+        # best bid must be at index 0 (highest bid)
+        assert float(bids[0]["price"]) == 0.58, (
+            f"Expected best bid 0.58 at index 0, got {bids[0]['price']}"
+        )
+        # best ask must be at index 0 (lowest ask)
+        assert float(asks[0]["price"]) == 0.59, (
+            f"Expected best ask 0.59 at index 0, got {asks[0]['price']} — "
+            "this is the bug that made suggest_order_price return 0.99 instead of 0.59"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_orderbook_already_sorted_unchanged(self):
+        """Orderbook that is already correctly sorted should not be reordered."""
+        client = self._build_client()
+
+        class OrderBookClient:
+            def get_order_book(self, token_id):
+                return OrderBookSummary(
+                    market="m1",
+                    asset_id="a1",
+                    bids=[
+                        OrderSummary(price="0.58", size="200"),  # best bid first
+                        OrderSummary(price="0.57", size="100"),
+                        OrderSummary(price="0.01", size="5"),
+                    ],
+                    asks=[
+                        OrderSummary(price="0.59", size="200"),  # best ask first
+                        OrderSummary(price="0.61", size="100"),
+                        OrderSummary(price="0.99", size="5"),
+                    ],
+                )
+
+        client.client = OrderBookClient()
+        orderbook = await client.get_orderbook("token-123")
+
+        assert float(orderbook["bids"][0]["price"]) == 0.58
+        assert float(orderbook["asks"][0]["price"]) == 0.59
+
 
 class TestMarketAnalysisIdentifierCompatibility:
     """Regression tests for market identifier handling in market analysis tools."""
