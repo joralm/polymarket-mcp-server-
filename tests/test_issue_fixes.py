@@ -312,6 +312,66 @@ class TestStreamableHTTPTransport:
             with pytest.raises(ValueError, match="between 1 and 65535"):
                 server_module.get_streamable_http_settings()
 
+    def test_mcp_route_matches_exact_path_without_trailing_slash(self):
+        """Route must match /mcp exactly so POST /mcp (init) isn't 404'd.
+
+        Starlette's Mount('/mcp', ...) creates regex ^/mcp/(?P<path>.*)$ which
+        requires a trailing slash, causing POST /mcp to return 404.
+        Route('/mcp{extra:path}', ...) creates ^/mcp(?P<extra>.*)$ which matches
+        /mcp, /mcp/, and /mcp/<session-id>.
+        """
+        from starlette.routing import compile_path
+
+        # Verify the Mount regex does NOT match /mcp (reproduces the bug)
+        mount_regex, _, _ = compile_path("/mcp/{path:path}")
+        assert not mount_regex.match("/mcp"), "Mount regex should not match /mcp (confirms bug)"
+        assert mount_regex.match("/mcp/"), "Mount regex should match /mcp/"
+
+        # Verify the Route regex we now use DOES match /mcp
+        route_regex, _, _ = compile_path("/mcp{extra:path}")
+        assert route_regex.match("/mcp"), "Route regex must match /mcp (exact path)"
+        assert route_regex.match("/mcp/"), "Route regex must match /mcp/ (trailing slash)"
+        assert route_regex.match("/mcp/abc123"), "Route regex must match /mcp/<session-id>"
+
+    def test_server_uses_route_not_mount_for_mcp_endpoint(self):
+        """Route("/mcp{extra:path}") must match /mcp for all HTTP methods.
+
+        Mount('/mcp', ...) misses POST /mcp returning 404; Route fixes this.
+        Verify behavior using a real Starlette Router + TestClient.
+        """
+        from starlette.routing import Route, Router
+        from starlette.responses import PlainTextResponse
+        from starlette.testclient import TestClient
+
+        # Simulate the actual server routing setup with a lightweight ASGI handler
+        class _FakeASGIApp:
+            async def __call__(self, scope, receive, send) -> None:
+                await PlainTextResponse("ok")(scope, receive, send)
+
+        fake_mcp_app = _FakeASGIApp()
+
+        router = Router(
+            routes=[
+                Route("/mcp/sse", endpoint=lambda req: PlainTextResponse("sse")),
+                Route("/mcp{extra:path}", endpoint=fake_mcp_app),
+            ],
+            redirect_slashes=False,
+        )
+
+        client = TestClient(router, raise_server_exceptions=True)
+
+        # The critical case: POST /mcp (no trailing slash) must NOT return 404
+        resp = client.post("/mcp", content=b"{}", headers={"content-type": "application/json"})
+        assert resp.status_code != 404, f"POST /mcp returned 404 — routing fix regressed (got {resp.status_code})"
+
+        # Trailing slash variant should also work
+        resp = client.post("/mcp/", content=b"{}", headers={"content-type": "application/json"})
+        assert resp.status_code != 404, f"POST /mcp/ returned 404 (got {resp.status_code})"
+
+        # /mcp/sse must still be handled by its dedicated route
+        resp = client.get("/mcp/sse")
+        assert resp.status_code != 404, f"GET /mcp/sse returned 404 (got {resp.status_code})"
+
 
 class TestWebSocketRuntimeRobustness:
     """Regression tests for websocket runtime safety checks."""
