@@ -75,9 +75,25 @@ class TradingTools:
         """Extract normalized token ids (and outcome labels) from CLOB or Gamma market payloads."""
         normalized_tokens: List[Dict[str, str]] = []
         raw_outcomes = TradingTools._parse_stringified_list(market.get("outcomes"))
-        clob_token_ids = TradingTools._parse_stringified_list(
-            market.get("clobTokenIds") or market.get("clob_token_ids")
-        )
+        raw_clob_token_ids = market.get("clobTokenIds") or market.get("clob_token_ids")
+        clob_token_ids: List[Any] = []
+        if isinstance(raw_clob_token_ids, list):
+            clob_token_ids = raw_clob_token_ids
+        elif isinstance(raw_clob_token_ids, str):
+            try:
+                parsed = json.loads(raw_clob_token_ids)
+                if isinstance(parsed, list):
+                    clob_token_ids = parsed
+                else:
+                    logger.warning(
+                        "clobTokenIds was not a JSON list; using raw value fallback"
+                    )
+                    clob_token_ids = [raw_clob_token_ids]
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Failed to parse clobTokenIds JSON string; using raw value fallback"
+                )
+                clob_token_ids = [raw_clob_token_ids]
         outcome_by_token_id = {
             str(token_id): str(raw_outcomes[i])
             for i, token_id in enumerate(clob_token_ids)
@@ -120,10 +136,6 @@ class TradingTools:
 
         if normalized_tokens:
             return normalized_tokens
-
-        if isinstance(market.get("clobTokenIds") or market.get("clob_token_ids"), str) and not clob_token_ids:
-            logger.warning("Failed to parse clobTokenIds as JSON; using raw value fallback")
-            clob_token_ids = [market.get("clobTokenIds") or market.get("clob_token_ids")]
 
         if isinstance(clob_token_ids, list):
             for i, token_id in enumerate(clob_token_ids):

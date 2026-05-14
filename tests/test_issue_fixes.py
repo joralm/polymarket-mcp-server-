@@ -1085,6 +1085,15 @@ class TestYesTokenSelection:
         ]
         assert tt._get_yes_token_id(tokens) == "yes_tok"
 
+    def test_get_yes_token_id_binary_fallback_when_only_no_is_labelled(self):
+        """If only NO is labelled in a binary market, pick the other token as YES."""
+        tt = self._make_trading_tools()
+        tokens = [
+            {"token_id": "no_tok", "outcome": "No"},
+            {"token_id": "other_tok", "outcome": ""},
+        ]
+        assert tt._get_yes_token_id(tokens) == "other_tok"
+
     def test_full_pipeline_no_first_is_picked_correctly(self):
         """Simulate the CLOB market response where NO is index 0 and YES is index 1."""
         tt = self._make_trading_tools()
