@@ -4,13 +4,8 @@ Loads and validates environment variables with proper defaults.
 """
 
 from typing import Optional
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-SIGNATURE_TYPE_EOA = 0
-SIGNATURE_TYPE_POLY_PROXY = 1
-SIGNATURE_TYPE_POLY_GNOSIS_SAFE = 2
-
 
 class PolymarketConfig(BaseSettings):
     """
@@ -46,30 +41,6 @@ class PolymarketConfig(BaseSettings):
     )
     POLYMARKET_API_KEY_NAME: Optional[str] = Field(
         default=None, description="API key name/identifier"
-    )
-
-    # Wallet signature type — must match how the wallet was registered with Polymarket
-    # 0 = EOA (regular externally-owned account)
-    # 1 = POLY_PROXY (Polymarket deposit-wallet flow; recommended default)
-    # 2 = POLY_GNOSIS_SAFE (Gnosis Safe multisig)
-    POLYMARKET_SIGNATURE_TYPE: int = Field(
-        default=1,
-        description=(
-            "Order signature type: 0=EOA, 1=POLY_PROXY (recommended default for Polymarket "
-            "deposit-wallet flow), 2=POLY_GNOSIS_SAFE."
-        ),
-    )
-
-    # Funder address for proxy/safe wallets.
-    # Leave empty for EOA wallets (POLYGON_ADDRESS == key-derived address).
-    # For POLY_PROXY wallets: set to the Polymarket proxy wallet address (same as POLYGON_ADDRESS).
-    POLYMARKET_FUNDER: Optional[str] = Field(
-        default=None,
-        description=(
-            "Funder address for POLY_PROXY or POLY_GNOSIS_SAFE wallets. "
-            "Set to POLYGON_ADDRESS when using a Polymarket proxy wallet. "
-            "Leave empty for standard EOA wallets."
-        ),
     )
 
     # Safety Limits - Risk Management
@@ -180,36 +151,6 @@ class PolymarketConfig(BaseSettings):
         if len(v) != 42:
             raise ValueError("POLYGON_ADDRESS must be 42 characters")
         return v.lower()
-
-    @field_validator("POLYMARKET_SIGNATURE_TYPE")
-    @classmethod
-    def validate_signature_type(cls, v: int) -> int:
-        """Validate signature type is one of the supported values"""
-        valid_types = [
-            SIGNATURE_TYPE_EOA,
-            SIGNATURE_TYPE_POLY_PROXY,
-            SIGNATURE_TYPE_POLY_GNOSIS_SAFE,
-        ]
-        if v not in valid_types:
-            raise ValueError(
-                f"POLYMARKET_SIGNATURE_TYPE must be one of {valid_types} "
-                "(0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE)"
-            )
-        return v
-
-    @model_validator(mode="after")
-    def normalize_proxy_funder(self) -> "PolymarketConfig":
-        """Default funder to wallet address for proxy/safe signature types."""
-        if (
-            self.POLYMARKET_SIGNATURE_TYPE
-            in (
-                SIGNATURE_TYPE_POLY_PROXY,
-                SIGNATURE_TYPE_POLY_GNOSIS_SAFE,
-            )
-            and not self.POLYMARKET_FUNDER
-        ):
-            self.POLYMARKET_FUNDER = self.POLYGON_ADDRESS
-        return self
 
     @field_validator("MAX_SPREAD_TOLERANCE")
     @classmethod

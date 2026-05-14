@@ -233,14 +233,11 @@ nano .env
 ```env
 POLYGON_PRIVATE_KEY=your_private_key_without_0x_prefix
 POLYGON_ADDRESS=0xYourPolygonAddress
-POLYMARKET_SIGNATURE_TYPE=1
-POLYMARKET_FUNDER=0xYourPolygonAddress
 ```
 
 **Supported trading flow (important):**
 - Use a wallet created/linked through the Polymarket **deposit-wallet flow** (MetaMask-linked).
-- Social-login-only accounts are not supported for order placement and can fail with:
-  `maker address not allowed, please use the deposit wallet flow`.
+- Social-login-only accounts are not supported for order placement.
 - `RELAYER_API_KEY` and `RELAYER_API_KEY_ADDRESS` are not used by this server.
 
 **L2 API keys (`POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_PASSPHRASE`):**
