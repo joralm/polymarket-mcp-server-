@@ -86,7 +86,8 @@ class TradingTools:
                     clob_token_ids = parsed
                 else:
                     logger.warning(
-                        "clobTokenIds was not a JSON list; using raw value fallback"
+                        "clobTokenIds JSON did not parse to a list (got %s); using raw value fallback",
+                        type(parsed).__name__,
                     )
                     clob_token_ids = [raw_clob_token_ids]
             except json.JSONDecodeError:
@@ -154,11 +155,13 @@ class TradingTools:
                 return token["token_id"]
         if len(tokens) == 2:
             # Binary-market fallback: if one side is explicitly NO, the other is YES.
-            first = TradingTools._normalize_outcome_label(tokens[0].get("outcome", ""))
-            second = TradingTools._normalize_outcome_label(tokens[1].get("outcome", ""))
-            if first in ("no", "false", "0") and second not in ("no", "false", "0"):
+            normalized_outcomes = [
+                TradingTools._normalize_outcome_label(token.get("outcome", "")) for token in tokens
+            ]
+            no_markers = {"no", "false", "0"}
+            if normalized_outcomes[0] in no_markers and normalized_outcomes[1] not in no_markers:
                 return tokens[1]["token_id"]
-            if second in ("no", "false", "0") and first not in ("no", "false", "0"):
+            if normalized_outcomes[1] in no_markers and normalized_outcomes[0] not in no_markers:
                 return tokens[0]["token_id"]
         return tokens[0]["token_id"]
 
