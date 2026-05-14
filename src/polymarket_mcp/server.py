@@ -17,7 +17,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
-from starlette.routing import Mount, Route, Router
+from starlette.routing import Route, Router
 import uvicorn
 
 from .config import load_config, PolymarketConfig
@@ -503,9 +503,12 @@ async def main() -> None:
                     status_code=501,
                 )
 
-            # Use Router with redirect_slashes=False so clients can POST to /mcp
-            # without being redirected to /mcp/ (a 307 redirect breaks many HTTP
-            # clients that won't forward POST bodies on redirect).
+            # Use Route(path + "{extra:path}", ...) instead of Mount(path, ...)
+            # so that requests to the exact path (e.g. POST /mcp) are matched.
+            # Mount("/mcp") generates regex ^/mcp/(?P<path>.*)$ which requires a
+            # trailing slash and therefore misses POST /mcp, returning 404.
+            # Route("/mcp{extra:path}") generates ^/mcp(?P<extra>.*)$ which matches
+            # /mcp, /mcp/, and /mcp/<session-id> alike.
             router = Router(
                 routes=[
                     Route("/health", endpoint=health_check),
@@ -513,7 +516,7 @@ async def main() -> None:
                     Route("/ping", endpoint=health_check),
                     Route("/ready", endpoint=health_check),
                     Route(path + "/sse", endpoint=sse_not_supported, methods=["GET", "POST"]),
-                    Mount(path, app=streamable_http_app),
+                    Route(path + "{extra:path}", endpoint=streamable_http_app),
                 ],
                 redirect_slashes=False,
                 lifespan=lifespan,

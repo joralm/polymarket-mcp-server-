@@ -312,6 +312,41 @@ class TestStreamableHTTPTransport:
             with pytest.raises(ValueError, match="between 1 and 65535"):
                 server_module.get_streamable_http_settings()
 
+    def test_mcp_route_matches_exact_path_without_trailing_slash(self):
+        """Route must match /mcp exactly so POST /mcp (init) isn't 404'd.
+
+        Starlette's Mount('/mcp', ...) creates regex ^/mcp/(?P<path>.*)$ which
+        requires a trailing slash, causing POST /mcp to return 404.
+        Route('/mcp{extra:path}', ...) creates ^/mcp(?P<extra>.*)$ which matches
+        /mcp, /mcp/, and /mcp/<session-id>.
+        """
+        from starlette.routing import compile_path
+
+        # Verify the Mount regex does NOT match /mcp (reproduces the bug)
+        mount_regex, _, _ = compile_path("/mcp/{path:path}")
+        assert not mount_regex.match("/mcp"), "Mount regex should not match /mcp (confirms bug)"
+        assert mount_regex.match("/mcp/"), "Mount regex should match /mcp/"
+
+        # Verify the Route regex we now use DOES match /mcp
+        route_regex, _, _ = compile_path("/mcp{extra:path}")
+        assert route_regex.match("/mcp"), "Route regex must match /mcp (exact path)"
+        assert route_regex.match("/mcp/"), "Route regex must match /mcp/ (trailing slash)"
+        assert route_regex.match("/mcp/abc123"), "Route regex must match /mcp/<session-id>"
+
+    def test_server_uses_route_not_mount_for_mcp_endpoint(self):
+        """server.py must use Route(...) not Mount(...) for the MCP endpoint.
+
+        Mount('/mcp', ...) misses POST /mcp returning 404; Route fixes this.
+        """
+        import polymarket_mcp.server as server_module
+
+        # Mount should not be imported at all if it's no longer used
+        assert not hasattr(server_module, "Mount") or not callable(
+            getattr(server_module, "Mount", None)
+        ), "Mount should not be imported in server.py"
+        # Confirm Route catch-all is wired in
+        assert 'Route(path + "{extra:path}"' in open(server_module.__file__).read()
+
 
 class TestWebSocketRuntimeRobustness:
     """Regression tests for websocket runtime safety checks."""
