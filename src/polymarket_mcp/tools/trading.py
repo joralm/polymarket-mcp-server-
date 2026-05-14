@@ -53,7 +53,7 @@ class TradingTools:
 
     @staticmethod
     def _extract_market_tokens(market: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Extract normalized token ids from CLOB or Gamma market payloads."""
+        """Extract normalized token ids (and outcome labels) from CLOB or Gamma market payloads."""
         normalized_tokens: List[Dict[str, str]] = []
 
         raw_tokens = market.get("tokens")
@@ -68,7 +68,8 @@ class TradingTools:
                     or token.get("id")
                 )
                 if token_id:
-                    normalized_tokens.append({"token_id": str(token_id)})
+                    outcome = str(token.get("outcome", ""))
+                    normalized_tokens.append({"token_id": str(token_id), "outcome": outcome})
 
         if normalized_tokens:
             return normalized_tokens
@@ -80,7 +81,8 @@ class TradingTools:
                     continue
                 token_id = token.get("token_id") or token.get("tokenId") or token.get("id")
                 if token_id:
-                    normalized_tokens.append({"token_id": str(token_id)})
+                    outcome = str(token.get("outcome", ""))
+                    normalized_tokens.append({"token_id": str(token_id), "outcome": outcome})
 
         if normalized_tokens:
             return normalized_tokens
@@ -94,11 +96,27 @@ class TradingTools:
                 clob_token_ids = [clob_token_ids]
 
         if isinstance(clob_token_ids, list):
-            for token_id in clob_token_ids:
+            # Gamma API provides an `outcomes` array in the same order as `clobTokenIds`
+            raw_outcomes = market.get("outcomes") or []
+            if isinstance(raw_outcomes, str):
+                try:
+                    raw_outcomes = json.loads(raw_outcomes)
+                except json.JSONDecodeError:
+                    raw_outcomes = []
+            for i, token_id in enumerate(clob_token_ids):
                 if token_id:
-                    normalized_tokens.append({"token_id": str(token_id)})
+                    outcome = str(raw_outcomes[i]) if i < len(raw_outcomes) else ""
+                    normalized_tokens.append({"token_id": str(token_id), "outcome": outcome})
 
         return normalized_tokens
+
+    @staticmethod
+    def _get_yes_token_id(tokens: List[Dict[str, str]]) -> str:
+        """Return the YES-outcome token ID, falling back to the first token if not labelled."""
+        for token in tokens:
+            if token.get("outcome", "").lower() in ("yes", "true", "1"):
+                return token["token_id"]
+        return tokens[0]["token_id"]
 
     async def _get_market_with_gamma_fallback(self, market_id: str) -> Dict[str, Any]:
         """Get market from CLOB, with fallback for Gamma numeric IDs."""
@@ -188,13 +206,12 @@ class TradingTools:
             logger.info(f"Fetching market data for {market_id}")
             market = await self._get_market_with_gamma_fallback(market_id)
 
-            # Get token ID (YES token for BUY, NO token for SELL on yes side typically)
-            # For simplicity, use first token. In production, implement proper token selection
+            # Get YES outcome token ID for pricing and order placement
             tokens = self._extract_market_tokens(market)
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]["token_id"]
+            token_id = self._get_yes_token_id(tokens)
 
             # Get orderbook for validation
             orderbook = await self.client.get_orderbook(token_id)
@@ -313,7 +330,7 @@ class TradingTools:
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]["token_id"]
+            token_id = self._get_yes_token_id(tokens)
 
             # Get best price from orderbook
             orderbook = await self.client.get_orderbook(token_id)
@@ -447,7 +464,7 @@ class TradingTools:
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]["token_id"]
+            token_id = self._get_yes_token_id(tokens)
             orderbook = await self.client.get_orderbook(token_id)
 
             # Parse orderbook
@@ -986,7 +1003,7 @@ class TradingTools:
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]["token_id"]
+            token_id = self._get_yes_token_id(tokens)
             orderbook = await self.client.get_orderbook(token_id)
 
             bids = orderbook.get("bids", [])
