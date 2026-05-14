@@ -380,6 +380,8 @@ async def initialize_server() -> None:
             api_key=config.POLYMARKET_API_KEY,
             api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
             passphrase=config.POLYMARKET_PASSPHRASE,
+            signature_type=config.POLYMARKET_SIGNATURE_TYPE,
+            funder=config.POLYMARKET_FUNDER,
         )
 
         # Create API credentials if not provided (optional - allows read-only mode)
