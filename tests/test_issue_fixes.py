@@ -1094,8 +1094,8 @@ class TestYesTokenSelection:
         ]
         assert tt._get_yes_token_id(tokens) == "other_tok"
 
-    def test_get_yes_token_id_does_not_promote_unrecognized_label(self):
-        """Fallback should not assume unknown labels are YES."""
+    def test_get_yes_token_id_with_unknown_label_uses_first_token_fallback(self):
+        """Unknown labels should fall back to deterministic first-token behavior."""
         tt = self._make_trading_tools()
         tokens = [
             {"token_id": "no_tok", "outcome": "No"},

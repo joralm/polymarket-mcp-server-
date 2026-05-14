@@ -104,7 +104,7 @@ class TradingTools:
         outcome_by_token_id = {
             str(token_id): str(raw_outcomes[i])
             for i, token_id in enumerate(clob_token_ids)
-            if token_id and i < len(raw_outcomes)
+            if token_id is not None and str(token_id) != "" and i < len(raw_outcomes)
         }
 
         raw_tokens = market.get("tokens")
@@ -165,7 +165,7 @@ class TradingTools:
                 TradingTools._normalize_outcome_label(token.get("outcome", "")) for token in tokens
             ]
             no_markers = {"no", "false", "0"}
-            yes_candidates = {"", "yes", "true", "1"}
+            yes_candidates = {""}
             if (
                 normalized_outcomes[0] in no_markers
                 and normalized_outcomes[1] in yes_candidates
