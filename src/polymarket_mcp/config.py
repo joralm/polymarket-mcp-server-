@@ -4,8 +4,12 @@ Loads and validates environment variables with proper defaults.
 """
 
 from typing import Optional
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+SIGNATURE_TYPE_EOA = 0
+SIGNATURE_TYPE_POLY_PROXY = 1
+SIGNATURE_TYPE_POLY_GNOSIS_SAFE = 2
 
 
 class PolymarketConfig(BaseSettings):
@@ -45,14 +49,14 @@ class PolymarketConfig(BaseSettings):
     )
 
     # Wallet signature type — must match how the wallet was registered with Polymarket
-    # 0 = EOA (regular externally-owned account, default for MetaMask/hardware wallets)
-    # 1 = POLY_PROXY (Polymarket proxy wallet created through the web interface)
+    # 0 = EOA (regular externally-owned account)
+    # 1 = POLY_PROXY (Polymarket deposit-wallet flow; recommended default)
     # 2 = POLY_GNOSIS_SAFE (Gnosis Safe multisig)
     POLYMARKET_SIGNATURE_TYPE: int = Field(
-        default=0,
+        default=1,
         description=(
-            "Order signature type: 0=EOA (default), 1=POLY_PROXY (Polymarket web wallet), "
-            "2=POLY_GNOSIS_SAFE. Use 1 if your POLYGON_ADDRESS is a Polymarket proxy wallet."
+            "Order signature type: 0=EOA, 1=POLY_PROXY (recommended default for Polymarket "
+            "deposit-wallet flow), 2=POLY_GNOSIS_SAFE."
         ),
     )
 
@@ -181,13 +185,31 @@ class PolymarketConfig(BaseSettings):
     @classmethod
     def validate_signature_type(cls, v: int) -> int:
         """Validate signature type is one of the supported values"""
-        valid_types = [0, 1, 2]
+        valid_types = [
+            SIGNATURE_TYPE_EOA,
+            SIGNATURE_TYPE_POLY_PROXY,
+            SIGNATURE_TYPE_POLY_GNOSIS_SAFE,
+        ]
         if v not in valid_types:
             raise ValueError(
                 f"POLYMARKET_SIGNATURE_TYPE must be one of {valid_types} "
                 "(0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE)"
             )
         return v
+
+    @model_validator(mode="after")
+    def normalize_proxy_funder(self) -> "PolymarketConfig":
+        """Default funder to wallet address for proxy/safe signature types."""
+        if (
+            self.POLYMARKET_SIGNATURE_TYPE
+            in (
+                SIGNATURE_TYPE_POLY_PROXY,
+                SIGNATURE_TYPE_POLY_GNOSIS_SAFE,
+            )
+            and not self.POLYMARKET_FUNDER
+        ):
+            self.POLYMARKET_FUNDER = self.POLYGON_ADDRESS
+        return self
 
     @field_validator("MAX_SPREAD_TOLERANCE")
     @classmethod

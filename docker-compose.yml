@@ -16,7 +16,12 @@ services:
 
       # Optional API credentials (if you have them)
       - POLYMARKET_API_KEY=${POLYMARKET_API_KEY:-}
+      - POLYMARKET_API_SECRET=${POLYMARKET_API_SECRET:-}
       - POLYMARKET_PASSPHRASE=${POLYMARKET_PASSPHRASE:-}
+
+      # Order signing mode (recommended for Polymarket deposit-wallet flow)
+      - POLYMARKET_SIGNATURE_TYPE=${POLYMARKET_SIGNATURE_TYPE:-1}
+      - POLYMARKET_FUNDER=${POLYMARKET_FUNDER:-}
 
       # Operating mode
       - DEMO_MODE=${DEMO_MODE:-false}

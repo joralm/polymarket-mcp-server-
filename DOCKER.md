@@ -84,7 +84,12 @@ POLYGON_ADDRESS=0xABCD...      # Your wallet address
 
 # Optional: Polymarket API credentials
 POLYMARKET_API_KEY=            # Leave empty to auto-generate
+POLYMARKET_API_SECRET=         # Leave empty to auto-generate
 POLYMARKET_PASSPHRASE=         # Leave empty to auto-generate
+
+# Recommended for Polymarket deposit-wallet flow
+POLYMARKET_SIGNATURE_TYPE=1
+POLYMARKET_FUNDER=0xABCD...
 
 # Operating mode
 DEMO_MODE=false                # Set to true for testing without real funds
@@ -109,6 +114,12 @@ REQUIRE_CONFIRMATION_ABOVE_USD=100
 **Polymarket API Keys (Optional):**
 - Leave empty - the server will auto-generate them on first run
 - Or create manually at: https://polymarket.com/settings/api
+
+**Important trading flow requirement:**
+- Use a MetaMask-linked wallet in Polymarket's **deposit wallet flow**.
+- Social-login-only accounts can be blocked from placing orders with:
+  `maker address not allowed, please use the deposit wallet flow`.
+- `RELAYER_API_KEY` / `RELAYER_API_KEY_ADDRESS` are not consumed by this server.
 
 ## Auto-Generated API Credentials
 

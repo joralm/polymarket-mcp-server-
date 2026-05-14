@@ -73,7 +73,10 @@ POLYGON_ADDRESS=your_wallet_address_here
 
 # Optional: Polymarket API credentials (if you have them)
 POLYMARKET_API_KEY=
+POLYMARKET_API_SECRET=
 POLYMARKET_PASSPHRASE=
+POLYMARKET_SIGNATURE_TYPE=1
+POLYMARKET_FUNDER=
 
 # Operating mode
 DEMO_MODE=false
