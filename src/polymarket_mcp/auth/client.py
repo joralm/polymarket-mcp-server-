@@ -7,12 +7,51 @@ from typing import Dict, Any, List, Optional
 import logging
 import httpx
 from py_clob_client_v2.client import ClobClient
-from py_clob_client_v2.clob_types import ApiCreds, OrderArgs, OrderType, BalanceAllowanceParams, AssetType, OrderPayload, OpenOrderParams
+from py_clob_client_v2.clob_types import (
+    ApiCreds,
+    OrderArgs,
+    OrderType,
+    BalanceAllowanceParams,
+    AssetType,
+    OrderPayload,
+    OpenOrderParams,
+)
 from py_clob_client_v2.exceptions import PolyApiException
 
 from .signer import OrderSigner
 
 logger = logging.getLogger(__name__)
+
+_CRED_BANNER = "=" * 70
+
+
+def _log_new_credentials(api_key: str, api_secret: str, passphrase: str, reason: str) -> None:
+    """
+    Emit a visually prominent INFO block showing newly generated API credentials.
+
+    The banner is logged at INFO level so it is always visible regardless of the
+    configured log level, and it tells the operator exactly which docker-compose /
+    .env variables they need to update and restart the container.
+
+    Args:
+        api_key: The newly issued POLYMARKET_API_KEY value.
+        api_secret: The newly issued POLYMARKET_API_SECRET value.
+        passphrase: The newly issued POLYMARKET_PASSPHRASE value.
+        reason: Short description of why credentials were generated (shown in banner title).
+    """
+    logger.info(_CRED_BANNER)
+    logger.info("⚠️  NEW POLYMARKET API CREDENTIALS GENERATED  ⚠️")
+    logger.info("Reason: %s", reason)
+    logger.info(_CRED_BANNER)
+    logger.info("Copy the values below into your docker-compose.yml (or .env file):")
+    logger.info("")
+    logger.info("  POLYMARKET_API_KEY=%s", api_key)
+    logger.info("  POLYMARKET_API_SECRET=%s", api_secret)
+    logger.info("  POLYMARKET_PASSPHRASE=%s", passphrase)
+    logger.info("")
+    logger.info("Then RESTART the container so the new credentials are picked up:")
+    logger.info("  docker compose down && docker compose up -d")
+    logger.info(_CRED_BANNER)
 
 
 class PolymarketClient:
@@ -165,7 +204,12 @@ class PolymarketClient:
             # Reinitialize client with new credentials
             self._initialize_client()
 
-            logger.info(f"API credentials created: {creds.api_key[:8]}...")
+            _log_new_credentials(
+                api_key=self.api_creds.api_key,
+                api_secret=self.api_creds.api_secret,
+                passphrase=self.api_creds.api_passphrase,
+                reason="No API credentials were configured — generated automatically on first run",
+            )
             return self.api_creds
 
         except Exception as e:
@@ -222,7 +266,9 @@ class PolymarketClient:
         return {}
 
     @staticmethod
-    def _sort_orderbook_levels(levels: List[Dict[str, Any]], descending: bool) -> List[Dict[str, Any]]:
+    def _sort_orderbook_levels(
+        levels: List[Dict[str, Any]], descending: bool
+    ) -> List[Dict[str, Any]]:
         """Sort orderbook levels by price.
 
         Args:
@@ -334,9 +380,7 @@ class PolymarketClient:
             }
             order_type_upper = order_type.upper()
             if order_type_upper not in order_type_map:
-                logger.warning(
-                    f"Unknown order_type '{order_type}', defaulting to GTC"
-                )
+                logger.warning(f"Unknown order_type '{order_type}', defaulting to GTC")
             order_type_enum = order_type_map.get(order_type_upper, OrderType.GTC)
 
             # Build order args for V2 (fee_rate_bps and nonce are managed by the SDK)
@@ -349,7 +393,9 @@ class PolymarketClient:
             )
 
             # create_and_post_order handles V1/V2 version negotiation and auto-retry
-            order_response = self.client.create_and_post_order(order_args, order_type=order_type_enum)
+            order_response = self.client.create_and_post_order(
+                order_args, order_type=order_type_enum
+            )
 
             logger.info(
                 f"Order posted: {side} {size} @ {price} "
@@ -590,7 +636,12 @@ class PolymarketClient:
         # Push updated creds into the live ClobClient instance so subsequent
         # calls use the new key without a full re-initialization.
         self.client.set_api_creds(self.api_creds)
-        logger.info("API credentials refreshed successfully.")
+        _log_new_credentials(
+            api_key=self.api_creds.api_key,
+            api_secret=self.api_creds.api_secret,
+            passphrase=self.api_creds.api_passphrase,
+            reason="HTTP 401 received — existing API credentials were stale or invalid",
+        )
 
     def get_address(self) -> str:
         """Get wallet address"""

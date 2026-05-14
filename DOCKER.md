@@ -110,6 +110,78 @@ REQUIRE_CONFIRMATION_ABOVE_USD=100
 - Leave empty - the server will auto-generate them on first run
 - Or create manually at: https://polymarket.com/settings/api
 
+## Auto-Generated API Credentials
+
+If `POLYMARKET_API_KEY` and `POLYMARKET_PASSPHRASE` are not set in your `.env` / docker-compose
+environment, the server **automatically derives fresh credentials** from your wallet private key
+on every startup.
+
+### When does this happen?
+
+- **First run** – no API key variables are configured.
+- **HTTP 401 from Polymarket** – the stored credentials have expired or become invalid and
+  the server re-derives them automatically.
+
+### What to do when new credentials appear in the logs
+
+When either scenario occurs you will see a prominent banner in the container logs:
+
+```
+docker compose logs -f
+```
+
+The banner looks like this:
+
+```
+======================================================================
+⚠️  NEW POLYMARKET API CREDENTIALS GENERATED  ⚠️
+Reason: No API credentials were configured — generated automatically on first run
+======================================================================
+Copy the values below into your docker-compose.yml (or .env file):
+
+  POLYMARKET_API_KEY=<full-key-value>
+  POLYMARKET_API_SECRET=<full-secret-value>
+  POLYMARKET_PASSPHRASE=<full-passphrase-value>
+
+Then RESTART the container so the new credentials are picked up:
+  docker compose down && docker compose up -d
+======================================================================
+```
+
+> ⚠️ **Important:** Persisting the credentials avoids creating a brand-new key on every
+> restart (Polymarket imposes per-wallet key limits).  Copy the three values printed in the
+> banner into your docker-compose environment and restart as instructed.
+
+### Step-by-step
+
+1. Start the server for the first time (or after a 401 error):
+   ```bash
+   docker compose up -d
+   ```
+2. Open the logs and look for the credential banner:
+   ```bash
+   docker compose logs -f
+   ```
+3. Copy the three printed values into your `docker-compose.yml`:
+   ```yaml
+   environment:
+     - POLYMARKET_API_KEY=<value from log>
+     - POLYMARKET_API_SECRET=<value from log>
+     - POLYMARKET_PASSPHRASE=<value from log>
+   ```
+   Or, if you use a `.env` file:
+   ```bash
+   POLYMARKET_API_KEY=<value from log>
+   POLYMARKET_API_SECRET=<value from log>
+   POLYMARKET_PASSPHRASE=<value from log>
+   ```
+4. Restart the container:
+   ```bash
+   docker compose down && docker compose up -d
+   ```
+
+
+
 ## Usage
 
 ### Start Server

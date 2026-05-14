@@ -482,6 +482,20 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
 - **Documentation**: Comprehensive (multiple guides)
 - **Dependencies**: Modern Python packages (MCP, httpx, websockets, eth-account)
 
+## 📦 Polymarket SDK Versions
+
+The table below lists the Polymarket (and related) SDK packages used by this project and the
+minimum version required. Exact pins can be found in `pyproject.toml`.
+
+| Package | Minimum version | Notes |
+|---------|----------------|-------|
+| `py-clob-client-v2` | `>=1.0.1` | Fork of the archived `py-clob-client` v1. Import path: `py_clob_client_v2`. Provides `ClobClient`, `ApiCreds`, `create_or_derive_api_key()`, and all order types used here. |
+| `eth-account` | `>=0.11.0` | EIP-712 wallet signing (L1 auth) |
+| `websockets` | `>=12.0` | Real-time WebSocket subscriptions |
+
+> **Note:** The original `py-clob-client` (v1) was archived by Polymarket in May 2026 and is
+> no longer maintained. This project uses the `py-clob-client-v2` fork exclusively.
+
 ---
 
 ## 🌐 Community
@@ -516,7 +530,7 @@ This project was made possible by:
 - **Cultura Builder Community** - Builder culture and support
 - **[Polymarket](https://polymarket.com)** - Amazing prediction market platform
 - **[Anthropic](https://anthropic.com)** - Claude and the MCP protocol
-- **[py-clob-client](https://github.com/Polymarket/py-clob-client)** - Official Polymarket SDK
+- **[py-clob-client-v2](https://github.com/Polymarket/py-clob-client)** - Polymarket CLOB SDK (v2 fork)
 
 Special thanks to all contributors and community members who have helped improve this project!
 
