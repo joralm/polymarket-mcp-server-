@@ -44,6 +44,30 @@ class PolymarketConfig(BaseSettings):
         default=None, description="API key name/identifier"
     )
 
+    # Wallet signature type — must match how the wallet was registered with Polymarket
+    # 0 = EOA (regular externally-owned account, default for MetaMask/hardware wallets)
+    # 1 = POLY_PROXY (Polymarket proxy wallet created through the web interface)
+    # 2 = POLY_GNOSIS_SAFE (Gnosis Safe multisig)
+    POLYMARKET_SIGNATURE_TYPE: int = Field(
+        default=0,
+        description=(
+            "Order signature type: 0=EOA (default), 1=POLY_PROXY (Polymarket web wallet), "
+            "2=POLY_GNOSIS_SAFE. Use 1 if your POLYGON_ADDRESS is a Polymarket proxy wallet."
+        ),
+    )
+
+    # Funder address for proxy/safe wallets.
+    # Leave empty for EOA wallets (POLYGON_ADDRESS == key-derived address).
+    # For POLY_PROXY wallets: set to the Polymarket proxy wallet address (same as POLYGON_ADDRESS).
+    POLYMARKET_FUNDER: Optional[str] = Field(
+        default=None,
+        description=(
+            "Funder address for POLY_PROXY or POLY_GNOSIS_SAFE wallets. "
+            "Set to POLYGON_ADDRESS when using a Polymarket proxy wallet. "
+            "Leave empty for standard EOA wallets."
+        ),
+    )
+
     # Safety Limits - Risk Management
     MAX_ORDER_SIZE_USD: float = Field(
         default=1000.0, description="Maximum size for a single order in USD"
@@ -152,6 +176,18 @@ class PolymarketConfig(BaseSettings):
         if len(v) != 42:
             raise ValueError("POLYGON_ADDRESS must be 42 characters")
         return v.lower()
+
+    @field_validator("POLYMARKET_SIGNATURE_TYPE")
+    @classmethod
+    def validate_signature_type(cls, v: int) -> int:
+        """Validate signature type is one of the supported values"""
+        valid_types = [0, 1, 2]
+        if v not in valid_types:
+            raise ValueError(
+                f"POLYMARKET_SIGNATURE_TYPE must be one of {valid_types} "
+                "(0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE)"
+            )
+        return v
 
     @field_validator("MAX_SPREAD_TOLERANCE")
     @classmethod
