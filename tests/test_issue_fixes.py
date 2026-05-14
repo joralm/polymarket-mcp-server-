@@ -11,7 +11,7 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
-from py_clob_client.clob_types import AssetType
+from py_clob_client.clob_types import AssetType, OrderBookSummary, OrderSummary
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
 from polymarket_mcp.tools.trading import TradingTools
@@ -622,39 +622,88 @@ class TestSDKCompatibility:
         assert balance["balance"] == "123.45"
 
     @pytest.mark.asyncio
+    async def test_get_positions_falls_back_to_data_api(self):
+        """Client should fallback to Data API when SDK lacks get_positions()."""
+        client = self._build_client()
+
+        class PositionsMissingClient:
+            pass
+
+        client.client = PositionsMissingClient()
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"market": "m1", "size": "10"}]
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.auth.client.httpx.AsyncClient", return_value=async_client_cm):
+            positions = await client.get_positions()
+
+        assert positions == [{"market": "m1", "size": "10"}]
+        assert mock_http_client.get.await_args.kwargs["params"]["user"] == client.address
+
+    @pytest.mark.asyncio
     async def test_get_orderbook_normalizes_orderbooksummary_object(self):
         """Orderbook response should be normalized to dict shape for downstream tools."""
         client = self._build_client()
 
-        class BidAsk:
-            def __init__(self, price, size):
-                self.price = price
-                self.size = size
-
-            @property
-            def __dict__(self):
-                return {"price": self.price, "size": self.size}
-
-        class OrderBookSummaryLike:
-            @property
-            def __dict__(self):
-                return {
-                    "market": "m1",
-                    "asset_id": "a1",
-                    "bids": [BidAsk("0.51", "100")],
-                    "asks": [BidAsk("0.52", "80")],
-                }
-
         class OrderBookClient:
             def get_order_book(self, token_id):
                 assert token_id == "token-123"
-                return OrderBookSummaryLike()
+                return OrderBookSummary(
+                    market="m1",
+                    asset_id="a1",
+                    bids=[OrderSummary(price="0.51", size="100")],
+                    asks=[OrderSummary(price="0.52", size="80")],
+                )
 
         client.client = OrderBookClient()
         orderbook = await client.get_orderbook("token-123")
 
         assert orderbook["bids"][0]["price"] == "0.51"
         assert orderbook["asks"][0]["price"] == "0.52"
+
+
+class TestMarketAnalysisIdentifierCompatibility:
+    """Regression tests for market identifier handling in market analysis tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_market_details_uses_slug_query_for_slug_like_market_id(self):
+        """Slug values passed as market_id should call Gamma with `slug` query param."""
+        from polymarket_mcp.tools import market_analysis
+
+        with patch.object(
+            market_analysis, "_fetch_gamma_api", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = [{"id": "123", "slug": "2026-nba-champion"}]
+            data = await market_analysis.get_market_details(market_id="2026-nba-champion")
+
+        assert data["slug"] == "2026-nba-champion"
+        mock_fetch.assert_awaited_once_with("/markets", {"slug": "2026-nba-champion"})
+
+    @pytest.mark.asyncio
+    async def test_get_event_markets_uses_slug_query_for_event_slug(self):
+        """Event slug should be queried via /events?slug=... to avoid 422 path errors."""
+        from polymarket_mcp.tools import market_discovery
+
+        with patch.object(
+            market_discovery, "_fetch_gamma_markets", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = [{"markets": [{"id": "m1"}]}]
+            markets = await market_discovery.get_event_markets(
+                event_slug="fifa-world-cup-2026-winner"
+            )
+
+        assert markets == [{"id": "m1"}]
+        mock_fetch.assert_awaited_once_with(
+            "/events", {"slug": "fifa-world-cup-2026-winner"}, limit=1
+        )
 
     @pytest.mark.asyncio
     async def test_server_routes_realtime_calls_through_registered_manager(self):

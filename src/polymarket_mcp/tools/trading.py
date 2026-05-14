@@ -90,6 +90,7 @@ class TradingTools:
             try:
                 clob_token_ids = json.loads(clob_token_ids)
             except json.JSONDecodeError:
+                logger.warning("Failed to parse clobTokenIds as JSON; using raw value fallback")
                 clob_token_ids = [clob_token_ids]
 
         if isinstance(clob_token_ids, list):

@@ -5,6 +5,7 @@ Handles L1 (private key) and L2 (API key) authentication.
 
 from typing import Dict, Any, List, Optional
 import logging
+import httpx
 from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import ApiCreds, OrderArgs, BalanceAllowanceParams, AssetType
 
@@ -210,13 +211,19 @@ class PolymarketClient:
             # py-clob-client may return OrderBookSummary dataclass-like objects.
             if hasattr(orderbook, "__dict__") and isinstance(orderbook.__dict__, dict):
                 normalized = dict(orderbook.__dict__)
+
+                def _normalize_level(level: Any) -> Dict[str, Any]:
+                    if isinstance(level, dict):
+                        return level
+                    if hasattr(level, "__dict__") and isinstance(level.__dict__, dict):
+                        return dict(level.__dict__)
+                    return {}
+
                 normalized["bids"] = [
-                    bid if isinstance(bid, dict) else dict(getattr(bid, "__dict__", {}))
-                    for bid in (normalized.get("bids") or [])
+                    _normalize_level(bid) for bid in (normalized.get("bids") or [])
                 ]
                 normalized["asks"] = [
-                    ask if isinstance(ask, dict) else dict(getattr(ask, "__dict__", {}))
-                    for ask in (normalized.get("asks") or [])
+                    _normalize_level(ask) for ask in (normalized.get("asks") or [])
                 ]
                 return normalized
 
@@ -401,8 +408,24 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
-            positions = self.client.get_positions(self.address)
-            return positions
+            get_positions_fn = getattr(self.client, "get_positions", None)
+            if callable(get_positions_fn):
+                try:
+                    positions = get_positions_fn(self.address)
+                except TypeError:
+                    positions = get_positions_fn()
+                if isinstance(positions, list):
+                    return positions
+
+            # SDK >=0.28 no longer exposes get_positions(); fallback to Data API.
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": self.address},
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data if isinstance(data, list) else []
 
         except Exception as e:
             logger.error(f"Failed to fetch positions: {e}")
