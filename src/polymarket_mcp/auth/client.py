@@ -431,8 +431,8 @@ class PolymarketClient:
 
         try:
             params = OpenOrderParams(
-                market=market or None,
-                asset_id=asset_id or None,
+                market=market,
+                asset_id=asset_id,
             )
             orders = self.client.get_open_orders(params)
             return orders
