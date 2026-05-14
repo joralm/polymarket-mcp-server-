@@ -535,13 +535,13 @@ class PolymarketClient:
             return float(value)
         if isinstance(value, str):
             cleaned = value.strip().replace(",", "")
-            # Keep digits, decimal separators and signs. This safely handles
-            # values like "$1.93", "€0.93", and "0.93 USDC".
-            cleaned = re.sub(r"[^0-9.\-+]", "", cleaned)
-            if not cleaned:
+            # Extract the first signed decimal number from values like
+            # "$1.93", "€0.93", and "0.93 USDC".
+            match = re.search(r"[+-]?(?:\d+\.\d+|\d+|\.\d+)", cleaned)
+            if not match:
                 return None
             try:
-                return float(cleaned)
+                return float(match.group(0))
             except ValueError:
                 return None
         return None
@@ -585,6 +585,14 @@ class PolymarketClient:
 
         return 0.0
 
+    @classmethod
+    def _normalize_balance_payload(cls, balance_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize balance payload to include canonical spendable `balance` in USDC."""
+        normalized = dict(balance_data)
+        normalized["balance"] = str(cls._extract_numeric_balance(normalized))
+        normalized.setdefault("currency", "USDC")
+        return normalized
+
     async def get_balance(self) -> Dict[str, Any]:
         """
         Get user's USDC balance.
@@ -625,10 +633,7 @@ class PolymarketClient:
                 balance_data = get_balance_fn()
 
             if isinstance(balance_data, dict):
-                normalized = dict(balance_data)
-                normalized["balance"] = str(self._extract_numeric_balance(normalized))
-                normalized.setdefault("currency", "USDC")
-                return normalized
+                return self._normalize_balance_payload(balance_data)
             return {"balance": str(balance_data)}
 
         # SDK >=0.28 exposes get_balance_allowance() instead.
@@ -637,10 +642,7 @@ class PolymarketClient:
             params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
             balance_data = get_balance_allowance_fn(params)
             if isinstance(balance_data, dict):
-                normalized = dict(balance_data)
-                normalized["balance"] = str(self._extract_numeric_balance(normalized))
-                normalized.setdefault("currency", "USDC")
-                return normalized
+                return self._normalize_balance_payload(balance_data)
             return {"balance": str(balance_data)}
 
         raise AttributeError("ClobClient does not expose a supported balance method")
