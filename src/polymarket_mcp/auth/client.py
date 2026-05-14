@@ -193,6 +193,15 @@ class PolymarketClient:
             raise
 
     @staticmethod
+    def _normalize_orderbook_level(level: Any) -> Dict[str, Any]:
+        """Coerce a single orderbook price level to a plain dict."""
+        if isinstance(level, dict):
+            return level
+        if hasattr(level, "__dict__") and isinstance(level.__dict__, dict):
+            return dict(level.__dict__)
+        return {}
+
+    @staticmethod
     def _sort_orderbook_levels(levels: List[Dict[str, Any]], descending: bool) -> List[Dict[str, Any]]:
         """Sort orderbook levels by price.
 
@@ -222,39 +231,23 @@ class PolymarketClient:
         try:
             orderbook = self.client.get_order_book(token_id)
 
-            def _normalize_level(level: Any) -> Dict[str, Any]:
-                if isinstance(level, dict):
-                    return level
-                if hasattr(level, "__dict__") and isinstance(level.__dict__, dict):
-                    return dict(level.__dict__)
-                return {}
-
             if isinstance(orderbook, dict):
                 normalized = dict(orderbook)
-                normalized["bids"] = self._sort_orderbook_levels(
-                    [_normalize_level(b) for b in (normalized.get("bids") or [])],
-                    descending=True,
-                )
-                normalized["asks"] = self._sort_orderbook_levels(
-                    [_normalize_level(a) for a in (normalized.get("asks") or [])],
-                    descending=False,
-                )
-                return normalized
-
-            # py-clob-client may return OrderBookSummary dataclass-like objects.
-            if hasattr(orderbook, "__dict__") and isinstance(orderbook.__dict__, dict):
+            elif hasattr(orderbook, "__dict__") and isinstance(orderbook.__dict__, dict):
+                # py-clob-client may return OrderBookSummary dataclass-like objects.
                 normalized = dict(orderbook.__dict__)
-                normalized["bids"] = self._sort_orderbook_levels(
-                    [_normalize_level(bid) for bid in (normalized.get("bids") or [])],
-                    descending=True,
-                )
-                normalized["asks"] = self._sort_orderbook_levels(
-                    [_normalize_level(ask) for ask in (normalized.get("asks") or [])],
-                    descending=False,
-                )
-                return normalized
+            else:
+                raise TypeError(f"Unsupported orderbook response type: {type(orderbook).__name__}")
 
-            raise TypeError(f"Unsupported orderbook response type: {type(orderbook).__name__}")
+            normalized["bids"] = self._sort_orderbook_levels(
+                [self._normalize_orderbook_level(b) for b in (normalized.get("bids") or [])],
+                descending=True,
+            )
+            normalized["asks"] = self._sort_orderbook_levels(
+                [self._normalize_orderbook_level(a) for a in (normalized.get("asks") or [])],
+                descending=False,
+            )
+            return normalized
 
         except Exception as e:
             logger.error(f"Failed to fetch orderbook for {token_id}: {e}")
