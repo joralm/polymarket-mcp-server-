@@ -625,6 +625,57 @@ class PolymarketClient:
         """Check if L2 API credentials are available"""
         return self.api_creds is not None
 
+    async def ensure_valid_api_credentials(self) -> None:
+        """
+        Ensure that L2 API credentials are present and valid.
+
+        Designed to be called once at server startup so that credential problems
+        are caught and resolved eagerly rather than surfacing on the first user
+        request.
+
+        Behaviour:
+        - No credentials configured → creates new credentials via
+          ``create_api_credentials()`` and logs the banner with the new values.
+        - Credentials configured → probes the CLOB balance endpoint to confirm
+          they are accepted.  On HTTP 401 the credentials are automatically
+          refreshed via ``_refresh_api_credentials()`` and the new values are
+          logged.  On any other error (network timeout, service unavailable, etc.)
+          a warning is emitted and startup continues with the existing credentials.
+
+        Raises:
+            Exception: If no credentials exist *and* creating new ones fails
+                       (e.g. the wallet has insufficient allowance).
+        """
+        if not self.api_creds:
+            logger.info("No API credentials found. Attempting to create...")
+            await self.create_api_credentials()
+            logger.info("API credentials created successfully!")
+            return
+
+        logger.info("Testing existing API credentials...")
+        try:
+            self._fetch_balance_once()
+            logger.info("API credentials verified successfully.")
+        except PolyApiException as e:
+            if e.status_code == 401:
+                logger.warning(
+                    "API credentials rejected (HTTP 401) — refreshing credentials..."
+                )
+                self._refresh_api_credentials()
+                logger.info("API credentials refreshed successfully.")
+            else:
+                logger.warning(
+                    "API credential probe returned an unexpected error (%s). "
+                    "Credentials may still be valid; continuing startup.",
+                    e,
+                )
+        except Exception as e:
+            logger.warning(
+                "Could not verify API credentials at startup (%s). "
+                "Credentials may still be valid; continuing startup.",
+                e,
+            )
+
     def _refresh_api_credentials(self) -> None:
         """
         Re-derive L2 API credentials from the wallet private key and update the client.

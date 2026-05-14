@@ -757,7 +757,6 @@ class TestSDKCompatibility:
         when the stored API key in env vars is stale.
         """
         from py_clob_client_v2.exceptions import PolyApiException
-        import httpx
 
         client = self._build_client()
 
@@ -1272,3 +1271,155 @@ class TestYesTokenSelection:
         assert selected == "yes_token_xyz", (
             "Should select YES token even when NO is listed first in the tokens array"
         )
+
+
+# ---------------------------------------------------------------------------
+# Startup credential validation — ensure_valid_api_credentials()
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureValidApiCredentials:
+    """ensure_valid_api_credentials() must verify/refresh/create creds at startup."""
+
+    _DUMMY_PRIVATE_KEY = "0x" + "a" * 64
+    _DUMMY_ADDRESS = "0x" + "0" * 40
+
+    def _make_client(self, with_creds: bool = True):
+        """Return a PolymarketClient whose ClobClient is fully mocked."""
+        with patch("polymarket_mcp.auth.client.ClobClient"):
+            client = PolymarketClient(
+                private_key=self._DUMMY_PRIVATE_KEY,
+                address=self._DUMMY_ADDRESS,
+                api_key="key-test" if with_creds else None,
+                api_secret="secret-test" if with_creds else None,
+                passphrase="pass-test" if with_creds else None,
+            )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_no_creds_calls_create_api_credentials(self):
+        """When no credentials are configured, new ones must be created."""
+        client = self._make_client(with_creds=False)
+        assert not client.has_api_credentials()
+
+        with patch.object(client, "create_api_credentials", new_callable=AsyncMock) as mock_create:
+            await client.ensure_valid_api_credentials()
+
+        mock_create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_valid_creds_probes_balance_and_passes(self):
+        """When creds are valid, _fetch_balance_once is called and no refresh occurs."""
+        client = self._make_client(with_creds=True)
+
+        with (
+            patch.object(client, "_fetch_balance_once", return_value={"balance": "10.0"}) as mock_probe,
+            patch.object(client, "_refresh_api_credentials") as mock_refresh,
+        ):
+            await client.ensure_valid_api_credentials()
+
+        mock_probe.assert_called_once()
+        mock_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stale_creds_401_triggers_refresh(self):
+        """On HTTP 401, existing credentials must be refreshed at startup."""
+        from py_clob_client_v2.exceptions import PolyApiException
+
+        client = self._make_client(with_creds=True)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.json.return_value = {"error": "Unauthorized"}
+        exc_401 = PolyApiException(resp=mock_resp)
+
+        with (
+            patch.object(client, "_fetch_balance_once", side_effect=exc_401),
+            patch.object(client, "_refresh_api_credentials") as mock_refresh,
+        ):
+            await client.ensure_valid_api_credentials()
+
+        mock_refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_non_401_api_error_does_not_block_startup(self):
+        """Non-auth errors (e.g. 503) must log a warning but not raise."""
+        from py_clob_client_v2.exceptions import PolyApiException
+
+        client = self._make_client(with_creds=True)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 503
+        mock_resp.json.return_value = {"error": "Service Unavailable"}
+        exc_503 = PolyApiException(resp=mock_resp)
+
+        with (
+            patch.object(client, "_fetch_balance_once", side_effect=exc_503),
+            patch.object(client, "_refresh_api_credentials") as mock_refresh,
+        ):
+            # Must not raise
+            await client.ensure_valid_api_credentials()
+
+        mock_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_network_error_does_not_block_startup(self):
+        """Generic network errors must log a warning and allow startup to continue."""
+        client = self._make_client(with_creds=True)
+
+        with (
+            patch.object(client, "_fetch_balance_once", side_effect=ConnectionError("timeout")),
+            patch.object(client, "_refresh_api_credentials") as mock_refresh,
+        ):
+            await client.ensure_valid_api_credentials()
+
+        mock_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_calls_ensure_valid(self):
+        """initialize_server() must call ensure_valid_api_credentials() on startup."""
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        mock_client = MagicMock(spec=PolymarketClient)
+        mock_client.has_api_credentials.return_value = True
+        mock_client.ensure_valid_api_credentials = AsyncMock()
+        mock_client.get_address.return_value = "0x" + "0" * 40
+        mock_client.get_chain_id.return_value = 137
+
+        mock_config = MagicMock()
+        mock_config.POLYGON_PRIVATE_KEY = "0x" + "a" * 64
+        mock_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        mock_config.POLYMARKET_CHAIN_ID = 137
+        mock_config.POLYMARKET_API_KEY = "k"
+        mock_config.POLYMARKET_API_SECRET = "s"
+        mock_config.POLYMARKET_PASSPHRASE = "p"
+        mock_config.POLYMARKET_SIGNATURE_TYPE = None
+        mock_config.POLYMARKET_FUNDER = None
+        mock_config.WS_ENABLED = False
+        mock_config.LOG_LEVEL = "INFO"
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=mock_config),
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                ),
+                patch("polymarket_mcp.server.create_safety_limits_from_config"),
+                patch("polymarket_mcp.server.get_rate_limiter"),
+                patch("polymarket_mcp.server.TradingTools"),
+            ):
+                await server_module.initialize_server()
+
+            mock_client.ensure_valid_api_credentials.assert_awaited_once()
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
