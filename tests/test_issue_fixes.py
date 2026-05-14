@@ -830,7 +830,7 @@ class TestSDKCompatibility:
         assert call_count == 1, "Should not retry on non-401 errors"
 
 
-
+class TestMarketAnalysisIdentifierCompatibility:
     """Regression tests for market identifier handling in market analysis tools."""
 
     @pytest.mark.asyncio

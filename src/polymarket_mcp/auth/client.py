@@ -590,7 +590,7 @@ class PolymarketClient:
         # Push updated creds into the live ClobClient instance so subsequent
         # calls use the new key without a full re-initialization.
         self.client.set_api_creds(self.api_creds)
-        logger.info(f"API credentials refreshed: {new_creds.api_key[:8]}...")
+        logger.info("API credentials refreshed successfully.")
 
     def get_address(self) -> str:
         """Get wallet address"""
