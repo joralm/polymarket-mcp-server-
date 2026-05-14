@@ -8,6 +8,7 @@ import logging
 import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import ApiCreds, OrderArgs, OrderType, BalanceAllowanceParams, AssetType, OrderPayload, OpenOrderParams
+from py_clob_client_v2.exceptions import PolyApiException
 
 from .signer import OrderSigner
 
@@ -523,39 +524,73 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
-            # Prefer legacy SDK method when available.
-            get_balance_fn = getattr(self.client, "get_balance", None)
-            if callable(get_balance_fn):
-                try:
-                    balance_data = get_balance_fn(self.address)
-                except TypeError:
-                    # Some SDK variants may expose a no-arg get_balance()
-                    balance_data = get_balance_fn()
-
-                if isinstance(balance_data, dict):
-                    return balance_data
-                return {"balance": str(balance_data)}
-
-            # SDK >=0.28 exposes get_balance_allowance() instead.
-            get_balance_allowance_fn = getattr(self.client, "get_balance_allowance", None)
-            if callable(get_balance_allowance_fn):
-                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
-                balance_data = get_balance_allowance_fn(params)
-                if isinstance(balance_data, dict):
-                    normalized = dict(balance_data)
-                    normalized.setdefault("balance", str(self._extract_numeric_balance(normalized)))
-                    return normalized
-                return {"balance": str(balance_data)}
-
-            raise AttributeError("ClobClient does not expose a supported balance method")
-
+            return self._fetch_balance_once()
+        except PolyApiException as e:
+            if e.status_code == 401:
+                logger.warning(
+                    "Received 401 from balance endpoint; refreshing API credentials and retrying..."
+                )
+                self._refresh_api_credentials()
+                return self._fetch_balance_once()
+            logger.error(f"Failed to fetch balance: {e}")
+            raise
         except Exception as e:
             logger.error(f"Failed to fetch balance: {e}")
             raise
 
+    def _fetch_balance_once(self) -> Dict[str, Any]:
+        """Execute the balance API call using the current credentials (no retry logic)."""
+        # Prefer legacy SDK method when available.
+        get_balance_fn = getattr(self.client, "get_balance", None)
+        if callable(get_balance_fn):
+            try:
+                balance_data = get_balance_fn(self.address)
+            except TypeError:
+                # Some SDK variants may expose a no-arg get_balance()
+                balance_data = get_balance_fn()
+
+            if isinstance(balance_data, dict):
+                return balance_data
+            return {"balance": str(balance_data)}
+
+        # SDK >=0.28 exposes get_balance_allowance() instead.
+        get_balance_allowance_fn = getattr(self.client, "get_balance_allowance", None)
+        if callable(get_balance_allowance_fn):
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            balance_data = get_balance_allowance_fn(params)
+            if isinstance(balance_data, dict):
+                normalized = dict(balance_data)
+                normalized.setdefault("balance", str(self._extract_numeric_balance(normalized)))
+                return normalized
+            return {"balance": str(balance_data)}
+
+        raise AttributeError("ClobClient does not expose a supported balance method")
+
     def has_api_credentials(self) -> bool:
         """Check if L2 API credentials are available"""
         return self.api_creds is not None
+
+    def _refresh_api_credentials(self) -> None:
+        """
+        Re-derive L2 API credentials from the wallet private key and update the client.
+
+        Called automatically when an authenticated request returns HTTP 401 to recover
+        from stale or expired API keys without requiring a server restart.
+
+        Raises:
+            Exception: If credential derivation fails.
+        """
+        logger.info("Refreshing API credentials via create_or_derive_api_key()...")
+        new_creds = self.client.create_or_derive_api_key()
+        self.api_creds = ApiCreds(
+            api_key=new_creds.api_key,
+            api_secret=new_creds.api_secret,
+            api_passphrase=new_creds.api_passphrase,
+        )
+        # Push updated creds into the live ClobClient instance so subsequent
+        # calls use the new key without a full re-initialization.
+        self.client.set_api_creds(self.api_creds)
+        logger.info(f"API credentials refreshed: {new_creds.api_key[:8]}...")
 
     def get_address(self) -> str:
         """Get wallet address"""
