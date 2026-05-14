@@ -45,9 +45,18 @@ def _log_new_credentials(api_key: str, api_secret: str, passphrase: str, reason:
     logger.info(_CRED_BANNER)
     logger.info("Copy the values below into your docker-compose.yml (or .env file):")
     logger.info("")
-    logger.info("  POLYMARKET_API_KEY=%s", api_key)
-    logger.info("  POLYMARKET_API_SECRET=%s", api_secret)
-    logger.info("  POLYMARKET_PASSPHRASE=%s", passphrase)
+    # NOTE: Clear-text credential logging is intentional here.
+    # The sole purpose of this function is to display newly-derived API keys to the
+    # operator so they can persist them in their docker-compose / .env and avoid
+    # re-deriving a fresh key on every restart (Polymarket imposes per-wallet limits).
+    # Ensure your logging backend (log files, aggregators) has appropriate access controls.
+    logger.info("  POLYMARKET_API_KEY=%s", api_key)  # codeql[py/clear-text-logging-sensitive-data]
+    logger.info(
+        "  POLYMARKET_API_SECRET=%s", api_secret
+    )  # codeql[py/clear-text-logging-sensitive-data]
+    logger.info(
+        "  POLYMARKET_PASSPHRASE=%s", passphrase
+    )  # codeql[py/clear-text-logging-sensitive-data]
     logger.info("")
     logger.info("Then RESTART the container so the new credentials are picked up:")
     logger.info("  docker compose down && docker compose up -d")
