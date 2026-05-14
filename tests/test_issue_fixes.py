@@ -11,7 +11,7 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
-from py_clob_client.clob_types import AssetType, OrderBookSummary, OrderSummary
+from py_clob_client_v2.clob_types import AssetType, OrderBookSummary, OrderSummary
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
 from polymarket_mcp.tools.trading import TradingTools

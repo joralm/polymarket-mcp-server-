@@ -6,8 +6,8 @@ Handles L1 (private key) and L2 (API key) authentication.
 from typing import Dict, Any, List, Optional
 import logging
 import httpx
-from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType, BalanceAllowanceParams, AssetType
+from py_clob_client_v2.client import ClobClient
+from py_clob_client_v2.clob_types import ApiCreds, OrderArgs, OrderType, BalanceAllowanceParams, AssetType, OrderPayload, OpenOrderParams
 
 from .signer import OrderSigner
 
@@ -151,8 +151,8 @@ class PolymarketClient:
         try:
             logger.info("Creating API credentials...")
 
-            # Use the client's built-in method to create credentials
-            creds = self.client.create_api_key()
+            # Use the client's built-in method to create/derive credentials
+            creds = self.client.create_or_derive_api_key()
 
             # Store credentials
             self.api_creds = ApiCreds(
@@ -338,20 +338,17 @@ class PolymarketClient:
                 )
             order_type_enum = order_type_map.get(order_type_upper, OrderType.GTC)
 
-            # Build order args (order_type is NOT a field on OrderArgs)
+            # Build order args for V2 (fee_rate_bps and nonce are managed by the SDK)
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
                 size=size,
                 side=side.upper(),
+                expiration=expiration or 0,
             )
 
-            if expiration:
-                order_args.expiration = expiration
-
-            # Create (sign) order, then post it with the order type
-            signed_order = self.client.create_order(order_args)
-            order_response = self.client.post_order(signed_order, order_type_enum)
+            # create_and_post_order handles V1/V2 version negotiation and auto-retry
+            order_response = self.client.create_and_post_order(order_args, order_type=order_type_enum)
 
             logger.info(
                 f"Order posted: {side} {size} @ {price} "
@@ -381,7 +378,7 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required for canceling orders")
 
         try:
-            response = self.client.cancel(order_id)
+            response = self.client.cancel_order(OrderPayload(orderID=order_id))
 
             logger.info(f"Order cancelled: {order_id}")
             return response
@@ -433,14 +430,11 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
-            # Build params
-            params = {}
-            if market:
-                params["market"] = market
-            if asset_id:
-                params["asset_id"] = asset_id
-
-            orders = self.client.get_orders(**params)
+            params = OpenOrderParams(
+                market=market or None,
+                asset_id=asset_id or None,
+            )
+            orders = self.client.get_open_orders(params)
             return orders
 
         except Exception as e:
