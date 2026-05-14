@@ -552,7 +552,11 @@ class TestTradingMarketIdCompatibility:
 
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {"conditionId": "0xabc123"}
+        mock_response.json.return_value = {
+            "conditionId": "0xabc123",
+            "clobTokenIds": ["9043581125", "12345"],
+            "outcomes": ["Yes", "No"],
+        }
 
         mock_http_client = AsyncMock()
         mock_http_client.get = AsyncMock(return_value=mock_response)
@@ -565,6 +569,8 @@ class TestTradingMarketIdCompatibility:
             market = await trading_tools._get_market_with_gamma_fallback("540819")
 
         assert market["tokens"][0]["token_id"] == "9043581125"
+        assert market["clobTokenIds"] == ["9043581125", "12345"]
+        assert market["outcomes"] == ["Yes", "No"]
         assert mock_client.get_market.await_args_list[0].args[0] == "540819"
         assert mock_client.get_market.await_args_list[1].args[0] == "0xabc123"
 
@@ -1053,6 +1059,31 @@ class TestYesTokenSelection:
         assert len(tokens) == 2
         by_id = {t["token_id"]: t["outcome"] for t in tokens}
         assert by_id["yes_tok"] == "Yes"
+
+    def test_extract_tokens_uses_gamma_outcome_map_for_unlabelled_clob_tokens(self):
+        """Unlabelled CLOB tokens should inherit outcomes from clobTokenIds/outcomes mapping."""
+        tt = self._make_trading_tools()
+        market = {
+            "tokens": [
+                {"token_id": "token_no"},
+                {"token_id": "token_yes"},
+            ],
+            "clobTokenIds": ["token_no", "token_yes"],
+            "outcomes": ["No", "Yes"],
+        }
+        tokens = tt._extract_market_tokens(market)
+        by_id = {t["token_id"]: t["outcome"] for t in tokens}
+        assert by_id["token_no"] == "No"
+        assert by_id["token_yes"] == "Yes"
+
+    def test_get_yes_token_id_handles_quoted_yes_labels(self):
+        """YES labels wrapped in quotes should still be detected."""
+        tt = self._make_trading_tools()
+        tokens = [
+            {"token_id": "no_tok", "outcome": "No"},
+            {"token_id": "yes_tok", "outcome": '"Yes"'},
+        ]
+        assert tt._get_yes_token_id(tokens) == "yes_tok"
 
     def test_full_pipeline_no_first_is_picked_correctly(self):
         """Simulate the CLOB market response where NO is index 0 and YES is index 1."""

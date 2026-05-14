@@ -52,9 +52,37 @@ class TradingTools:
         return None
 
     @staticmethod
+    def _parse_stringified_list(raw_value: Any) -> List[Any]:
+        """Parse list fields that may be delivered as JSON-encoded strings."""
+        if isinstance(raw_value, list):
+            return raw_value
+        if isinstance(raw_value, str):
+            try:
+                parsed = json.loads(raw_value)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                return []
+        return []
+
+    @staticmethod
+    def _normalize_outcome_label(outcome: str) -> str:
+        """Normalize outcome labels for resilient YES/NO matching."""
+        return outcome.strip().strip("'\"").lower()
+
+    @staticmethod
     def _extract_market_tokens(market: Dict[str, Any]) -> List[Dict[str, str]]:
         """Extract normalized token ids (and outcome labels) from CLOB or Gamma market payloads."""
         normalized_tokens: List[Dict[str, str]] = []
+        raw_outcomes = TradingTools._parse_stringified_list(market.get("outcomes"))
+        clob_token_ids = TradingTools._parse_stringified_list(
+            market.get("clobTokenIds") or market.get("clob_token_ids")
+        )
+        outcome_by_token_id = {
+            str(token_id): str(raw_outcomes[i])
+            for i, token_id in enumerate(clob_token_ids)
+            if token_id and i < len(raw_outcomes)
+        }
 
         raw_tokens = market.get("tokens")
         if isinstance(raw_tokens, list):
@@ -68,7 +96,10 @@ class TradingTools:
                     or token.get("id")
                 )
                 if token_id:
+                    token_id_str = str(token_id)
                     outcome = str(token.get("outcome", ""))
+                    if not outcome and token_id_str in outcome_by_token_id:
+                        outcome = outcome_by_token_id[token_id_str]
                     normalized_tokens.append({"token_id": str(token_id), "outcome": outcome})
 
         if normalized_tokens:
@@ -81,28 +112,20 @@ class TradingTools:
                     continue
                 token_id = token.get("token_id") or token.get("tokenId") or token.get("id")
                 if token_id:
+                    token_id_str = str(token_id)
                     outcome = str(token.get("outcome", ""))
+                    if not outcome and token_id_str in outcome_by_token_id:
+                        outcome = outcome_by_token_id[token_id_str]
                     normalized_tokens.append({"token_id": str(token_id), "outcome": outcome})
 
         if normalized_tokens:
             return normalized_tokens
 
-        clob_token_ids = market.get("clobTokenIds") or market.get("clob_token_ids")
-        if isinstance(clob_token_ids, str):
-            try:
-                clob_token_ids = json.loads(clob_token_ids)
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse clobTokenIds as JSON; using raw value fallback")
-                clob_token_ids = [clob_token_ids]
+        if isinstance(market.get("clobTokenIds") or market.get("clob_token_ids"), str) and not clob_token_ids:
+            logger.warning("Failed to parse clobTokenIds as JSON; using raw value fallback")
+            clob_token_ids = [market.get("clobTokenIds") or market.get("clob_token_ids")]
 
         if isinstance(clob_token_ids, list):
-            # Gamma API provides an `outcomes` array in the same order as `clobTokenIds`
-            raw_outcomes = market.get("outcomes") or []
-            if isinstance(raw_outcomes, str):
-                try:
-                    raw_outcomes = json.loads(raw_outcomes)
-                except json.JSONDecodeError:
-                    raw_outcomes = []
             for i, token_id in enumerate(clob_token_ids):
                 if token_id:
                     outcome = str(raw_outcomes[i]) if i < len(raw_outcomes) else ""
@@ -114,8 +137,17 @@ class TradingTools:
     def _get_yes_token_id(tokens: List[Dict[str, str]]) -> str:
         """Return the YES-outcome token ID, falling back to the first token if not labelled."""
         for token in tokens:
-            if token.get("outcome", "").lower() in ("yes", "true", "1"):
+            normalized = TradingTools._normalize_outcome_label(token.get("outcome", ""))
+            if normalized in ("yes", "true", "1"):
                 return token["token_id"]
+        if len(tokens) == 2:
+            # Binary-market fallback: if one side is explicitly NO, the other is YES.
+            first = TradingTools._normalize_outcome_label(tokens[0].get("outcome", ""))
+            second = TradingTools._normalize_outcome_label(tokens[1].get("outcome", ""))
+            if first in ("no", "false", "0") and second not in ("no", "false", "0"):
+                return tokens[1]["token_id"]
+            if second in ("no", "false", "0") and first not in ("no", "false", "0"):
+                return tokens[0]["token_id"]
         return tokens[0]["token_id"]
 
     async def _get_market_with_gamma_fallback(self, market_id: str) -> Dict[str, Any]:
@@ -150,7 +182,13 @@ class TradingTools:
                 market_id,
                 condition_id,
             )
-            return await self.client.get_market(condition_id)
+            clob_market = await self.client.get_market(condition_id)
+            if isinstance(clob_market, dict):
+                for key in ("clobTokenIds", "clob_token_ids", "outcomes"):
+                    value = gamma_market.get(key)
+                    if value and not clob_market.get(key):
+                        clob_market[key] = value
+            return clob_market
 
     # ========== ORDER CREATION TOOLS ==========
 
