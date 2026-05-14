@@ -13,6 +13,7 @@ Provides 10 tools for analyzing markets:
 - analyze_market_opportunity: AI-powered analysis
 - compare_markets: Compare multiple markets
 """
+
 import json
 import logging
 from typing import Dict, Any, List, Optional
@@ -33,6 +34,7 @@ CLOB_API_URL = "https://clob.polymarket.com"
 # Data Models
 class PriceData(BaseModel):
     """Price information for a token"""
+
     token_id: str
     bid: Optional[float] = None
     ask: Optional[float] = None
@@ -43,12 +45,14 @@ class PriceData(BaseModel):
 
 class OrderBookEntry(BaseModel):
     """Single order book entry"""
+
     price: float
     size: float
 
 
 class OrderBook(BaseModel):
     """Complete order book"""
+
     token_id: str
     bids: List[OrderBookEntry]
     asks: List[OrderBookEntry]
@@ -57,6 +61,7 @@ class OrderBook(BaseModel):
 
 class VolumeData(BaseModel):
     """Volume statistics"""
+
     market_id: str
     volume_24h: Optional[float] = None
     volume_7d: Optional[float] = None
@@ -66,6 +71,7 @@ class VolumeData(BaseModel):
 
 class MarketOpportunity(BaseModel):
     """Market analysis and opportunity assessment"""
+
     market_id: str
     market_question: str
     current_price_yes: Optional[float] = None
@@ -117,9 +123,7 @@ async def _fetch_clob_api(endpoint: str, params: Optional[Dict] = None) -> Any:
 
 
 async def get_market_details(
-    market_id: Optional[str] = None,
-    condition_id: Optional[str] = None,
-    slug: Optional[str] = None
+    market_id: Optional[str] = None, condition_id: Optional[str] = None, slug: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Get complete market information.
@@ -133,19 +137,34 @@ async def get_market_details(
         Full market object with all metadata
     """
     try:
+
+        def _is_slug(value: str) -> bool:
+            return not value.isdigit() and not value.startswith("0x")
+
         # Determine which identifier to use
         if slug:
-            data = await _fetch_gamma_api(f"/markets/{slug}")
+            data = await _fetch_gamma_api("/markets", {"slug": slug})
         elif condition_id:
-            data = await _fetch_gamma_api(f"/markets", {"condition_id": condition_id})
+            data = await _fetch_gamma_api("/markets", {"condition_id": condition_id})
         elif market_id:
-            data = await _fetch_gamma_api(f"/markets/{market_id}")
+            market_id = str(market_id)
+            if _is_slug(market_id):
+                data = await _fetch_gamma_api("/markets", {"slug": market_id})
+            elif market_id.startswith("0x"):
+                data = await _fetch_gamma_api("/markets", {"condition_id": market_id})
+            else:
+                data = await _fetch_gamma_api(f"/markets/{market_id}")
         else:
             raise ValueError("One of market_id, condition_id, or slug must be provided")
 
         # Handle list response
         if isinstance(data, list) and len(data) > 0:
             return data[0]
+
+        if isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
+            if data["data"]:
+                return data["data"][0]
+            raise ValueError("Market not found")
 
         return data
 
@@ -154,10 +173,7 @@ async def get_market_details(
         raise
 
 
-async def get_current_price(
-    token_id: str,
-    side: str = "BOTH"
-) -> PriceData:
+async def get_current_price(token_id: str, side: str = "BOTH") -> PriceData:
     """
     Get current bid/ask prices.
 
@@ -192,10 +208,7 @@ async def get_current_price(
         raise
 
 
-async def get_orderbook(
-    token_id: str,
-    depth: int = 20
-) -> OrderBook:
+async def get_orderbook(token_id: str, depth: int = 20) -> OrderBook:
     """
     Get complete order book.
 
@@ -220,11 +233,7 @@ async def get_orderbook(
             for entry in book_data.get("asks", [])[:depth]
         ]
 
-        orderbook = OrderBook(
-            token_id=token_id,
-            bids=bids,
-            asks=asks
-        )
+        orderbook = OrderBook(token_id=token_id, bids=bids, asks=asks)
 
         logger.info(f"Orderbook for {token_id}: {len(bids)} bids, {len(asks)} asks")
 
@@ -260,7 +269,7 @@ async def get_spread(token_id: str) -> Dict[str, float]:
             "spread_percentage": spread_pct,
             "bid": price_data.bid,
             "ask": price_data.ask,
-            "mid": price_data.mid
+            "mid": price_data.mid,
         }
 
         logger.info(f"Spread for {token_id}: {spread_value:.4f} ({spread_pct:.2f}%)")
@@ -272,10 +281,7 @@ async def get_spread(token_id: str) -> Dict[str, float]:
         raise
 
 
-async def get_market_volume(
-    market_id: str,
-    timeframes: Optional[List[str]] = None
-) -> VolumeData:
+async def get_market_volume(market_id: str, timeframes: Optional[List[str]] = None) -> VolumeData:
     """
     Get volume statistics.
 
@@ -288,7 +294,7 @@ async def get_market_volume(
     """
     try:
         if timeframes is None:
-            timeframes = ['24h', '7d', '30d']
+            timeframes = ["24h", "7d", "30d"]
 
         # Get market details which include volume data
         market_data = await get_market_details(market_id=market_id)
@@ -328,7 +334,7 @@ async def get_liquidity(market_id: str) -> Dict[str, Any]:
         result = {
             "market_id": market_id,
             "liquidity_usd": liquidity,
-            "liquidity_formatted": f"${liquidity:,.2f}"
+            "liquidity_formatted": f"${liquidity:,.2f}",
         }
 
         logger.info(f"Liquidity for {market_id}: ${liquidity:,.2f}")
@@ -344,7 +350,7 @@ async def get_price_history(
     token_id: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    resolution: str = "1h"
+    resolution: str = "1h",
 ) -> List[Dict[str, Any]]:
     """
     Get historical price data.
@@ -377,20 +383,19 @@ async def get_price_history(
             "Consider using a third-party data provider."
         )
 
-        return [{
-            "error": "Historical price data not available via public Polymarket API",
-            "suggestion": "Use real-time price tracking or third-party data providers"
-        }]
+        return [
+            {
+                "error": "Historical price data not available via public Polymarket API",
+                "suggestion": "Use real-time price tracking or third-party data providers",
+            }
+        ]
 
     except Exception as e:
         logger.error(f"Failed to get price history: {e}")
         raise
 
 
-async def get_market_holders(
-    market_id: str,
-    limit: int = 10
-) -> List[Dict[str, Any]]:
+async def get_market_holders(market_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     """
     Get top position holders.
 
@@ -410,10 +415,12 @@ async def get_market_holders(
             "may not be publicly available"
         )
 
-        return [{
-            "error": "Position holder data not available via public API",
-            "suggestion": "This data may require authenticated access with proper permissions"
-        }]
+        return [
+            {
+                "error": "Position holder data not available via public API",
+                "suggestion": "This data may require authenticated access with proper permissions",
+            }
+        ]
 
     except Exception as e:
         logger.error(f"Failed to get market holders: {e}")
@@ -492,7 +499,9 @@ async def analyze_market_opportunity(market_id: str) -> MarketOpportunity:
         if risk == "high":
             recommendation = "AVOID"
             confidence = 30
-            reasoning = f"Risk assessment: {risk_reason}. Market conditions not favorable for trading."
+            reasoning = (
+                f"Risk assessment: {risk_reason}. Market conditions not favorable for trading."
+            )
         elif liquidity_usd > 50000 and volume_24h > 10000:
             recommendation = "HOLD"
             confidence = 70
@@ -504,7 +513,9 @@ async def analyze_market_opportunity(market_id: str) -> MarketOpportunity:
         else:
             recommendation = "HOLD"
             confidence = 50
-            reasoning = "Market conditions are acceptable but not optimal. Monitor for better entry points."
+            reasoning = (
+                "Market conditions are acceptable but not optimal. Monitor for better entry points."
+            )
 
         # Price trend (simplified)
         price_trend = "stable"  # Would need historical data for accurate trend
@@ -522,7 +533,7 @@ async def analyze_market_opportunity(market_id: str) -> MarketOpportunity:
             risk_assessment=risk,
             recommendation=recommendation,
             confidence_score=confidence,
-            reasoning=reasoning
+            reasoning=reasoning,
         )
 
         logger.info(
@@ -572,17 +583,14 @@ async def compare_markets(market_ids: List[str]) -> List[Dict[str, Any]]:
                     "liquidity_usd": liquidity.get("liquidity_usd"),
                     "end_date": market.get("endDate") or market.get("end_date_iso"),
                     "active": market.get("active", True),
-                    "tags": market.get("tags", [])
+                    "tags": market.get("tags", []),
                 }
 
                 comparisons.append(comparison)
 
             except Exception as market_error:
                 logger.warning(f"Failed to fetch data for {market_id}: {market_error}")
-                comparisons.append({
-                    "market_id": market_id,
-                    "error": str(market_error)
-                })
+                comparisons.append({"market_id": market_id, "error": str(market_error)})
 
         logger.info(f"Compared {len(comparisons)} markets")
 
@@ -603,21 +611,18 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market ID"},
                     "condition_id": {
                         "type": "string",
-                        "description": "Condition ID (alternative identifier)"
+                        "description": "Condition ID (alternative identifier)",
                     },
                     "slug": {
                         "type": "string",
-                        "description": "Market slug (alternative identifier)"
-                    }
+                        "description": "Market slug (alternative identifier)",
+                    },
                 },
-                "required": []
-            }
+                "required": [],
+            },
         ),
         types.Tool(
             name="get_current_price",
@@ -625,19 +630,16 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "token_id": {
-                        "type": "string",
-                        "description": "Token ID"
-                    },
+                    "token_id": {"type": "string", "description": "Token ID"},
                     "side": {
                         "type": "string",
                         "enum": ["BUY", "SELL", "BOTH"],
                         "description": "Price side to fetch (default: BOTH)",
-                        "default": "BOTH"
-                    }
+                        "default": "BOTH",
+                    },
                 },
-                "required": ["token_id"]
-            }
+                "required": ["token_id"],
+            },
         ),
         types.Tool(
             name="get_orderbook",
@@ -645,32 +647,24 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "token_id": {
-                        "type": "string",
-                        "description": "Token ID"
-                    },
+                    "token_id": {"type": "string", "description": "Token ID"},
                     "depth": {
                         "type": "integer",
                         "description": "Number of price levels per side (default 20)",
-                        "default": 20
-                    }
+                        "default": 20,
+                    },
                 },
-                "required": ["token_id"]
-            }
+                "required": ["token_id"],
+            },
         ),
         types.Tool(
             name="get_spread",
             description="Get current spread (difference between bid and ask prices).",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "token_id": {
-                        "type": "string",
-                        "description": "Token ID"
-                    }
-                },
-                "required": ["token_id"]
-            }
+                "properties": {"token_id": {"type": "string", "description": "Token ID"}},
+                "required": ["token_id"],
+            },
         ),
         types.Tool(
             name="get_market_volume",
@@ -678,32 +672,24 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market ID"},
                     "timeframes": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of timeframes (default: ['24h', '7d', '30d'])"
-                    }
+                        "description": "List of timeframes (default: ['24h', '7d', '30d'])",
+                    },
                 },
-                "required": ["market_id"]
-            }
+                "required": ["market_id"],
+            },
         ),
         types.Tool(
             name="get_liquidity",
             description="Get available liquidity in USD for a market.",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market ID"
-                    }
-                },
-                "required": ["market_id"]
-            }
+                "properties": {"market_id": {"type": "string", "description": "Market ID"}},
+                "required": ["market_id"],
+            },
         ),
         types.Tool(
             name="get_price_history",
@@ -711,27 +697,24 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "token_id": {
-                        "type": "string",
-                        "description": "Token ID"
-                    },
+                    "token_id": {"type": "string", "description": "Token ID"},
                     "start_date": {
                         "type": "string",
-                        "description": "Start date (ISO format or timestamp)"
+                        "description": "Start date (ISO format or timestamp)",
                     },
                     "end_date": {
                         "type": "string",
-                        "description": "End date (ISO format or timestamp)"
+                        "description": "End date (ISO format or timestamp)",
                     },
                     "resolution": {
                         "type": "string",
                         "enum": ["1m", "5m", "1h", "1d"],
                         "description": "Time resolution (default: 1h)",
-                        "default": "1h"
-                    }
+                        "default": "1h",
+                    },
                 },
-                "required": ["token_id"]
-            }
+                "required": ["token_id"],
+            },
         ),
         types.Tool(
             name="get_market_holders",
@@ -739,18 +722,15 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market ID"},
                     "limit": {
                         "type": "integer",
                         "description": "Number of top holders (default 10)",
-                        "default": 10
-                    }
+                        "default": 10,
+                    },
                 },
-                "required": ["market_id"]
-            }
+                "required": ["market_id"],
+            },
         ),
         types.Tool(
             name="analyze_market_opportunity",
@@ -758,13 +738,10 @@ def get_tools() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market ID to analyze"
-                    }
+                    "market_id": {"type": "string", "description": "Market ID to analyze"}
                 },
-                "required": ["market_id"]
-            }
+                "required": ["market_id"],
+            },
         ),
         types.Tool(
             name="compare_markets",
@@ -775,12 +752,12 @@ def get_tools() -> List[types.Tool]:
                     "market_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of market IDs to compare (2-10 markets)"
+                        "description": "List of market IDs to compare (2-10 markets)",
                     }
                 },
-                "required": ["market_ids"]
-            }
-        )
+                "required": ["market_ids"],
+            },
+        ),
     ]
 
 
@@ -802,15 +779,15 @@ async def handle_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCo
         elif name == "get_current_price":
             result = await get_current_price(**arguments)
             # Convert Pydantic model to dict
-            result = result.model_dump(mode='json')
+            result = result.model_dump(mode="json")
         elif name == "get_orderbook":
             result = await get_orderbook(**arguments)
-            result = result.model_dump(mode='json')
+            result = result.model_dump(mode="json")
         elif name == "get_spread":
             result = await get_spread(**arguments)
         elif name == "get_market_volume":
             result = await get_market_volume(**arguments)
-            result = result.model_dump(mode='json')
+            result = result.model_dump(mode="json")
         elif name == "get_liquidity":
             result = await get_liquidity(**arguments)
         elif name == "get_price_history":
@@ -819,20 +796,14 @@ async def handle_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextCo
             result = await get_market_holders(**arguments)
         elif name == "analyze_market_opportunity":
             result = await analyze_market_opportunity(**arguments)
-            result = result.model_dump(mode='json')
+            result = result.model_dump(mode="json")
         elif name == "compare_markets":
             result = await compare_markets(**arguments)
         else:
             raise ValueError(f"Unknown tool: {name}")
 
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, indent=2)
-        )]
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
 
     except Exception as e:
         logger.error(f"Tool execution failed for {name}: {e}")
-        return [types.TextContent(
-            type="text",
-            text=json.dumps({"error": str(e)}, indent=2)
-        )]
+        return [types.TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]

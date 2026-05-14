@@ -5,8 +5,9 @@ Handles L1 (private key) and L2 (API key) authentication.
 
 from typing import Dict, Any, List, Optional
 import logging
+import httpx
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs
+from py_clob_client.clob_types import ApiCreds, OrderArgs, BalanceAllowanceParams, AssetType
 
 from .signer import OrderSigner
 
@@ -203,7 +204,30 @@ class PolymarketClient:
         """
         try:
             orderbook = self.client.get_order_book(token_id)
-            return orderbook
+
+            if isinstance(orderbook, dict):
+                return orderbook
+
+            # py-clob-client may return OrderBookSummary dataclass-like objects.
+            if hasattr(orderbook, "__dict__") and isinstance(orderbook.__dict__, dict):
+                normalized = dict(orderbook.__dict__)
+
+                def _normalize_level(level: Any) -> Dict[str, Any]:
+                    if isinstance(level, dict):
+                        return level
+                    if hasattr(level, "__dict__") and isinstance(level.__dict__, dict):
+                        return dict(level.__dict__)
+                    return {}
+
+                normalized["bids"] = [
+                    _normalize_level(bid) for bid in (normalized.get("bids") or [])
+                ]
+                normalized["asks"] = [
+                    _normalize_level(ask) for ask in (normalized.get("asks") or [])
+                ]
+                return normalized
+
+            raise TypeError(f"Unsupported orderbook response type: {type(orderbook).__name__}")
 
         except Exception as e:
             logger.error(f"Failed to fetch orderbook for {token_id}: {e}")
@@ -384,14 +408,61 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
-            positions = self.client.get_positions(self.address)
-            return positions
+            get_positions_fn = getattr(self.client, "get_positions", None)
+            if callable(get_positions_fn):
+                try:
+                    positions = get_positions_fn(self.address)
+                except TypeError:
+                    positions = get_positions_fn()
+                if isinstance(positions, list):
+                    return positions
+
+            # SDK >=0.28 no longer exposes get_positions(); fallback to Data API.
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": self.address},
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data if isinstance(data, list) else []
 
         except Exception as e:
             logger.error(f"Failed to fetch positions: {e}")
             raise
 
-    async def get_balance(self) -> Dict[str, float]:
+    @staticmethod
+    def _extract_numeric_balance(balance_data: Dict[str, Any]) -> float:
+        """Extract a numeric balance from known balance/allowance payload shapes."""
+        candidates = [
+            balance_data.get("balance"),
+            balance_data.get("available"),
+            balance_data.get("available_balance"),
+            balance_data.get("amount"),
+        ]
+
+        for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
+            nested = balance_data.get(nested_key)
+            if isinstance(nested, dict):
+                candidates.extend(
+                    [
+                        nested.get("balance"),
+                        nested.get("available"),
+                        nested.get("available_balance"),
+                        nested.get("amount"),
+                        nested.get("value"),
+                    ]
+                )
+
+        for value in candidates:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+
+        return 0.0
+
+    async def get_balance(self) -> Dict[str, Any]:
         """
         Get user's USDC balance.
 
@@ -405,8 +476,31 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
-            balance_data = self.client.get_balance(self.address)
-            return balance_data
+            # Prefer legacy SDK method when available.
+            get_balance_fn = getattr(self.client, "get_balance", None)
+            if callable(get_balance_fn):
+                try:
+                    balance_data = get_balance_fn(self.address)
+                except TypeError:
+                    # Some SDK variants may expose a no-arg get_balance()
+                    balance_data = get_balance_fn()
+
+                if isinstance(balance_data, dict):
+                    return balance_data
+                return {"balance": str(balance_data)}
+
+            # SDK >=0.28 exposes get_balance_allowance() instead.
+            get_balance_allowance_fn = getattr(self.client, "get_balance_allowance", None)
+            if callable(get_balance_allowance_fn):
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+                balance_data = get_balance_allowance_fn(params)
+                if isinstance(balance_data, dict):
+                    normalized = dict(balance_data)
+                    normalized.setdefault("balance", str(self._extract_numeric_balance(normalized)))
+                    return normalized
+                return {"balance": str(balance_data)}
+
+            raise AttributeError("ClobClient does not expose a supported balance method")
 
         except Exception as e:
             logger.error(f"Failed to fetch balance: {e}")

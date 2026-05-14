@@ -11,7 +11,10 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
+from py_clob_client.clob_types import AssetType, OrderBookSummary, OrderSummary
+from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
+from polymarket_mcp.tools.trading import TradingTools
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
 # ---------------------------------------------------------------------------
@@ -362,7 +365,9 @@ class TestStreamableHTTPTransport:
 
         # The critical case: POST /mcp (no trailing slash) must NOT return 404
         resp = client.post("/mcp", content=b"{}", headers={"content-type": "application/json"})
-        assert resp.status_code != 404, f"POST /mcp returned 404 — routing fix regressed (got {resp.status_code})"
+        assert (
+            resp.status_code != 404
+        ), f"POST /mcp returned 404 — routing fix regressed (got {resp.status_code})"
 
         # Trailing slash variant should also work
         resp = client.post("/mcp/", content=b"{}", headers={"content-type": "application/json"})
@@ -521,6 +526,184 @@ class TestCriticalRuntimeFixes:
             server_module.rate_limiter = original_rate_limiter
             server_module.trading_tools = original_trading_tools
             server_module.websocket_manager = original_websocket_manager
+
+
+class TestTradingMarketIdCompatibility:
+    """Regression tests for accepting Gamma market IDs in trading tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_market_with_gamma_fallback_resolves_condition_id(self):
+        """Numeric Gamma IDs should resolve to CLOB condition IDs before trading."""
+        mock_client = MagicMock()
+        mock_client.get_market = AsyncMock(
+            side_effect=[
+                RuntimeError("market not found"),
+                {"tokens": [{"token_id": "9043581125"}], "volume": "1000"},
+            ]
+        )
+
+        trading_tools = TradingTools(
+            client=mock_client,
+            safety_limits=MagicMock(),
+            config=MagicMock(GAMMA_API_URL="https://gamma-api.polymarket.com"),
+        )
+        trading_tools.rate_limiter = AsyncMock()
+        trading_tools.rate_limiter.acquire = AsyncMock(return_value=0.0)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {"conditionId": "0xabc123"}
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.tools.trading.httpx.AsyncClient", return_value=async_client_cm):
+            market = await trading_tools._get_market_with_gamma_fallback("540819")
+
+        assert market["tokens"][0]["token_id"] == "9043581125"
+        assert mock_client.get_market.await_args_list[0].args[0] == "540819"
+        assert mock_client.get_market.await_args_list[1].args[0] == "0xabc123"
+
+    def test_extract_market_tokens_supports_gamma_clob_token_ids(self):
+        """Gamma `clobTokenIds` payloads should be normalized into token dicts."""
+        market = {"clobTokenIds": '["111","222"]'}
+
+        tokens = TradingTools._extract_market_tokens(market)
+        assert tokens == [{"token_id": "111"}, {"token_id": "222"}]
+
+
+class TestSDKCompatibility:
+    """Regression tests for py-clob-client API compatibility changes."""
+
+    @staticmethod
+    def _build_client() -> PolymarketClient:
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                api_key="test-api-key",
+                api_secret="test-api-secret",
+                passphrase="test-api-passphrase",
+            )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_get_balance_uses_legacy_method_when_available(self):
+        """Client should keep supporting SDKs that expose get_balance()."""
+        client = self._build_client()
+
+        class LegacyBalanceClient:
+            def get_balance(self, address):
+                assert address == client.address
+                return {"balance": "42.5"}
+
+        client.client = LegacyBalanceClient()
+        balance = await client.get_balance()
+        assert balance["balance"] == "42.5"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_falls_back_to_get_balance_allowance(self):
+        """Client should support SDKs that only expose get_balance_allowance()."""
+        client = self._build_client()
+
+        class AllowanceOnlyClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"available": "123.45", "allowance": "9999"}
+
+        client.client = AllowanceOnlyClient()
+        balance = await client.get_balance()
+
+        assert balance["available"] == "123.45"
+        assert balance["balance"] == "123.45"
+
+    @pytest.mark.asyncio
+    async def test_get_positions_falls_back_to_data_api(self):
+        """Client should fallback to Data API when SDK lacks get_positions()."""
+        client = self._build_client()
+
+        class PositionsMissingClient:
+            pass
+
+        client.client = PositionsMissingClient()
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"market": "m1", "size": "10"}]
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.auth.client.httpx.AsyncClient", return_value=async_client_cm):
+            positions = await client.get_positions()
+
+        assert positions == [{"market": "m1", "size": "10"}]
+        assert mock_http_client.get.await_args.kwargs["params"]["user"] == client.address
+
+    @pytest.mark.asyncio
+    async def test_get_orderbook_normalizes_orderbooksummary_object(self):
+        """Orderbook response should be normalized to dict shape for downstream tools."""
+        client = self._build_client()
+
+        class OrderBookClient:
+            def get_order_book(self, token_id):
+                assert token_id == "token-123"
+                return OrderBookSummary(
+                    market="m1",
+                    asset_id="a1",
+                    bids=[OrderSummary(price="0.51", size="100")],
+                    asks=[OrderSummary(price="0.52", size="80")],
+                )
+
+        client.client = OrderBookClient()
+        orderbook = await client.get_orderbook("token-123")
+
+        assert orderbook["bids"][0]["price"] == "0.51"
+        assert orderbook["asks"][0]["price"] == "0.52"
+
+
+class TestMarketAnalysisIdentifierCompatibility:
+    """Regression tests for market identifier handling in market analysis tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_market_details_uses_slug_query_for_slug_like_market_id(self):
+        """Slug values passed as market_id should call Gamma with `slug` query param."""
+        from polymarket_mcp.tools import market_analysis
+
+        with patch.object(
+            market_analysis, "_fetch_gamma_api", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = [{"id": "123", "slug": "2026-nba-champion"}]
+            data = await market_analysis.get_market_details(market_id="2026-nba-champion")
+
+        assert data["slug"] == "2026-nba-champion"
+        mock_fetch.assert_awaited_once_with("/markets", {"slug": "2026-nba-champion"})
+
+    @pytest.mark.asyncio
+    async def test_get_event_markets_uses_slug_query_for_event_slug(self):
+        """Event slug should be queried via /events?slug=... to avoid 422 path errors."""
+        from polymarket_mcp.tools import market_discovery
+
+        with patch.object(
+            market_discovery, "_fetch_gamma_markets", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = [{"markets": [{"id": "m1"}]}]
+            markets = await market_discovery.get_event_markets(
+                event_slug="fifa-world-cup-2026-winner"
+            )
+
+        assert markets == [{"id": "m1"}]
+        mock_fetch.assert_awaited_once_with(
+            "/events", {"slug": "fifa-world-cup-2026-winner"}, limit=1
+        )
 
     @pytest.mark.asyncio
     async def test_server_routes_realtime_calls_through_registered_manager(self):
@@ -733,7 +916,9 @@ class TestCriticalRuntimeFixes:
             with (
                 patch.object(server_module, "load_config", return_value=fake_config),
                 patch.object(server_module, "create_polymarket_client", return_value=fake_client),
-                patch.object(server_module, "create_safety_limits_from_config", return_value=MagicMock()),
+                patch.object(
+                    server_module, "create_safety_limits_from_config", return_value=MagicMock()
+                ),
                 patch.object(server_module, "get_rate_limiter", return_value=MagicMock()),
                 patch.object(server_module, "WebSocketManager") as mock_ws_manager,
                 patch.object(server_module.realtime, "set_websocket_manager") as mock_set_manager,
@@ -768,7 +953,9 @@ class TestCriticalRuntimeFixes:
             with (
                 patch.object(server_module.market_discovery, "get_tools", return_value=[]),
                 patch.object(server_module.market_analysis, "get_tools", return_value=[]),
-                patch.object(server_module.realtime, "get_tools", return_value=[MagicMock()]) as mock_realtime,
+                patch.object(
+                    server_module.realtime, "get_tools", return_value=[MagicMock()]
+                ) as mock_realtime,
             ):
                 tools = await server_module.list_tools()
 
