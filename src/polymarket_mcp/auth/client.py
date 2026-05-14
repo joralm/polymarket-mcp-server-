@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 import logging
 import httpx
 from py_clob_client.client import ClobClient
-from py_clob_client.clob_types import ApiCreds, OrderArgs, BalanceAllowanceParams, AssetType
+from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType, BalanceAllowanceParams, AssetType
 
 from .signer import OrderSigner
 
@@ -305,20 +305,29 @@ class PolymarketClient:
             )
 
         try:
-            # Build order args
+            # Map string order_type to OrderType enum
+            order_type_map = {
+                "GTC": OrderType.GTC,
+                "FOK": OrderType.FOK,
+                "GTD": OrderType.GTD,
+                "FAK": OrderType.FAK,
+            }
+            order_type_enum = order_type_map.get(order_type.upper(), OrderType.GTC)
+
+            # Build order args (order_type is NOT a field on OrderArgs)
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
                 size=size,
                 side=side.upper(),
-                order_type=order_type,
             )
 
             if expiration:
                 order_args.expiration = expiration
 
-            # Post order using client
-            order_response = self.client.create_order(order_args)
+            # Create (sign) order, then post it with the order type
+            signed_order = self.client.create_order(order_args)
+            order_response = self.client.post_order(signed_order, order_type_enum)
 
             logger.info(
                 f"Order posted: {side} {size} @ {price} "
