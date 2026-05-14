@@ -76,10 +76,10 @@ except:
     print("   ❌ httpx não encontrado")
 
 try:
-    from py_clob_client.client import ClobClient
-    print("   ✅ py-clob-client instalado")
+    from py_clob_client_v2.client import ClobClient
+    print("   ✅ py-clob-client-v2 instalado")
 except:
-    print("   ❌ py-clob-client não encontrado")
+    print("   ❌ py-clob-client-v2 não encontrado")
 
 try:
     import websockets
