@@ -2,12 +2,13 @@
 Trading tools for Polymarket MCP server.
 Implements 12 comprehensive tools for order management and smart trading.
 """
-import asyncio
+
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 import mcp.types as types
+import httpx
 
 from ..config import PolymarketConfig
 from ..auth import PolymarketClient
@@ -34,15 +35,103 @@ class TradingTools:
     """
 
     def __init__(
-        self,
-        client: PolymarketClient,
-        safety_limits: SafetyLimits,
-        config: PolymarketConfig
+        self, client: PolymarketClient, safety_limits: SafetyLimits, config: PolymarketConfig
     ):
         self.client = client
         self.safety_limits = safety_limits
         self.config = config
         self.rate_limiter = get_rate_limiter()
+
+    @staticmethod
+    def _extract_condition_id(market: Dict[str, Any]) -> Optional[str]:
+        """Extract CLOB condition id from a market payload with variant field names."""
+        for key in ("condition_id", "conditionId", "conditionID", "condition"):
+            condition_id = market.get(key)
+            if condition_id:
+                return str(condition_id)
+        return None
+
+    @staticmethod
+    def _extract_market_tokens(market: Dict[str, Any]) -> List[Dict[str, str]]:
+        """Extract normalized token ids from CLOB or Gamma market payloads."""
+        normalized_tokens: List[Dict[str, str]] = []
+
+        raw_tokens = market.get("tokens")
+        if isinstance(raw_tokens, list):
+            for token in raw_tokens:
+                if not isinstance(token, dict):
+                    continue
+                token_id = (
+                    token.get("token_id")
+                    or token.get("tokenId")
+                    or token.get("asset_id")
+                    or token.get("id")
+                )
+                if token_id:
+                    normalized_tokens.append({"token_id": str(token_id)})
+
+        if normalized_tokens:
+            return normalized_tokens
+
+        outcome_tokens = market.get("outcomeTokens")
+        if isinstance(outcome_tokens, list):
+            for token in outcome_tokens:
+                if not isinstance(token, dict):
+                    continue
+                token_id = token.get("token_id") or token.get("tokenId") or token.get("id")
+                if token_id:
+                    normalized_tokens.append({"token_id": str(token_id)})
+
+        if normalized_tokens:
+            return normalized_tokens
+
+        clob_token_ids = market.get("clobTokenIds") or market.get("clob_token_ids")
+        if isinstance(clob_token_ids, str):
+            try:
+                clob_token_ids = json.loads(clob_token_ids)
+            except json.JSONDecodeError:
+                clob_token_ids = [clob_token_ids]
+
+        if isinstance(clob_token_ids, list):
+            for token_id in clob_token_ids:
+                if token_id:
+                    normalized_tokens.append({"token_id": str(token_id)})
+
+        return normalized_tokens
+
+    async def _get_market_with_gamma_fallback(self, market_id: str) -> Dict[str, Any]:
+        """Get market from CLOB, with fallback for Gamma numeric IDs."""
+        try:
+            return await self.client.get_market(market_id)
+        except Exception as clob_error:
+            if str(market_id).startswith("0x"):
+                raise
+
+            logger.warning(
+                "Failed CLOB market lookup for %s, trying Gamma fallback: %s",
+                market_id,
+                clob_error,
+            )
+
+            await self.rate_limiter.acquire(EndpointCategory.GAMMA_API)
+            gamma_api_url = getattr(
+                self.config, "GAMMA_API_URL", "https://gamma-api.polymarket.com"
+            ).rstrip("/")
+            async with httpx.AsyncClient(timeout=15.0) as http_client:
+                response = await http_client.get(f"{gamma_api_url}/markets/{market_id}")
+                response.raise_for_status()
+                gamma_market = response.json()
+
+            condition_id = self._extract_condition_id(gamma_market)
+            if not condition_id:
+                return gamma_market
+
+            logger.info(
+                "Resolved Gamma market id %s to condition id %s for CLOB trading",
+                market_id,
+                condition_id,
+            )
+            return await self.client.get_market(condition_id)
 
     # ========== ORDER CREATION TOOLS ==========
 
@@ -53,7 +142,7 @@ class TradingTools:
         price: float,
         size: float,
         order_type: str = "GTC",
-        expiration: Optional[int] = None
+        expiration: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Create a limit order on Polymarket.
@@ -84,41 +173,41 @@ class TradingTools:
                 raise ValueError(f"Size must be positive, got {size}")
 
             side = side.upper()
-            if side not in ['BUY', 'SELL']:
+            if side not in ["BUY", "SELL"]:
                 raise ValueError(f"Side must be BUY or SELL, got {side}")
 
             order_type = order_type.upper()
-            if order_type not in ['GTC', 'GTD', 'FOK', 'FAK']:
+            if order_type not in ["GTC", "GTD", "FOK", "FAK"]:
                 raise ValueError(f"Invalid order type: {order_type}")
 
-            if order_type == 'GTD' and not expiration:
+            if order_type == "GTD" and not expiration:
                 raise ValueError("GTD orders require expiration timestamp")
 
             # Get market data
             logger.info(f"Fetching market data for {market_id}")
-            market = await self.client.get_market(market_id)
+            market = await self._get_market_with_gamma_fallback(market_id)
 
             # Get token ID (YES token for BUY, NO token for SELL on yes side typically)
             # For simplicity, use first token. In production, implement proper token selection
-            tokens = market.get('tokens', [])
+            tokens = self._extract_market_tokens(market)
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]['token_id']
+            token_id = tokens[0]["token_id"]
 
             # Get orderbook for validation
             orderbook = await self.client.get_orderbook(token_id)
 
             # Parse orderbook data
-            bids = orderbook.get('bids', [])
-            asks = orderbook.get('asks', [])
+            bids = orderbook.get("bids", [])
+            asks = orderbook.get("asks", [])
 
-            best_bid = float(bids[0]['price']) if bids else 0.0
-            best_ask = float(asks[0]['price']) if asks else 1.0
+            best_bid = float(bids[0]["price"]) if bids else 0.0
+            best_ask = float(asks[0]["price"]) if asks else 1.0
 
             # Calculate liquidity
-            bid_liquidity = sum(float(b['price']) * float(b['size']) for b in bids[:10])
-            ask_liquidity = sum(float(a['price']) * float(a['size']) for a in asks[:10])
+            bid_liquidity = sum(float(b["price"]) * float(b["size"]) for b in bids[:10])
+            ask_liquidity = sum(float(a["price"]) * float(a["size"]) for a in asks[:10])
 
             market_data = MarketData(
                 market_id=market_id,
@@ -127,7 +216,7 @@ class TradingTools:
                 best_ask=best_ask,
                 bid_liquidity=bid_liquidity,
                 ask_liquidity=ask_liquidity,
-                total_volume=float(market.get('volume', 0))
+                total_volume=float(market.get("volume", 0)),
             )
 
             # Get current positions
@@ -139,18 +228,12 @@ class TradingTools:
 
             # Create order request for validation
             order_request = OrderRequest(
-                token_id=token_id,
-                price=price,
-                size=size_in_shares,
-                side=side,
-                market_id=market_id
+                token_id=token_id, price=price, size=size_in_shares, side=side, market_id=market_id
             )
 
             # Safety validation
             is_valid, error_msg = self.safety_limits.validate_order(
-                order_request,
-                positions,
-                market_data
+                order_request, positions, market_data
             )
 
             if not is_valid:
@@ -158,8 +241,7 @@ class TradingTools:
 
             # Check if confirmation required
             if self.safety_limits.should_require_confirmation(
-                order_request,
-                self.config.ENABLE_AUTONOMOUS_TRADING
+                order_request, self.config.ENABLE_AUTONOMOUS_TRADING
             ):
                 logger.warning(
                     f"Order requires confirmation: ${size:.2f} exceeds threshold "
@@ -180,13 +262,13 @@ class TradingTools:
                 size=size_in_shares,
                 side=side,
                 order_type=order_type,
-                expiration=expiration
+                expiration=expiration,
             )
 
             result = {
                 "success": True,
-                "order_id": order_response.get('orderID'),
-                "status": order_response.get('status', 'submitted'),
+                "order_id": order_response.get("orderID"),
+                "status": order_response.get("status", "submitted"),
                 "details": {
                     "market_id": market_id,
                     "token_id": token_id,
@@ -195,9 +277,9 @@ class TradingTools:
                     "size_shares": size_in_shares,
                     "size_usd": size,
                     "order_type": order_type,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
-                "order_response": order_response
+                "order_response": order_response,
             }
 
             logger.info(f"Order created successfully: {result['order_id']}")
@@ -208,20 +290,10 @@ class TradingTools:
             return {
                 "success": False,
                 "error": str(e),
-                "details": {
-                    "market_id": market_id,
-                    "side": side,
-                    "price": price,
-                    "size_usd": size
-                }
+                "details": {"market_id": market_id, "side": side, "price": price, "size_usd": size},
             }
 
-    async def create_market_order(
-        self,
-        market_id: str,
-        side: str,
-        size: float
-    ) -> Dict[str, Any]:
+    async def create_market_order(self, market_id: str, side: str, size: float) -> Dict[str, Any]:
         """
         Execute market order at best available price (FOK).
 
@@ -235,45 +307,39 @@ class TradingTools:
         """
         try:
             # Get current best price
-            market = await self.client.get_market(market_id)
-            tokens = market.get('tokens', [])
+            market = await self._get_market_with_gamma_fallback(market_id)
+            tokens = self._extract_market_tokens(market)
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]['token_id']
+            token_id = tokens[0]["token_id"]
 
             # Get best price from orderbook
             orderbook = await self.client.get_orderbook(token_id)
 
             side_upper = side.upper()
-            if side_upper == 'BUY':
+            if side_upper == "BUY":
                 # Buy at best ask
-                asks = orderbook.get('asks', [])
+                asks = orderbook.get("asks", [])
                 if not asks:
                     raise ValueError("No asks available in orderbook")
-                best_price = float(asks[0]['price'])
+                best_price = float(asks[0]["price"])
             else:
                 # Sell at best bid
-                bids = orderbook.get('bids', [])
+                bids = orderbook.get("bids", [])
                 if not bids:
                     raise ValueError("No bids available in orderbook")
-                best_price = float(bids[0]['price'])
+                best_price = float(bids[0]["price"])
 
-            logger.info(
-                f"Executing market order: {side} ${size} @ market price {best_price}"
-            )
+            logger.info(f"Executing market order: {side} ${size} @ market price {best_price}")
 
             # Use FOK (Fill-Or-Kill) for market orders
             result = await self.create_limit_order(
-                market_id=market_id,
-                side=side,
-                price=best_price,
-                size=size,
-                order_type='FOK'
+                market_id=market_id, side=side, price=best_price, size=size, order_type="FOK"
             )
 
-            result['execution_type'] = 'market_order'
-            result['executed_price'] = best_price
+            result["execution_type"] = "market_order"
+            result["executed_price"] = best_price
 
             return result
 
@@ -283,17 +349,10 @@ class TradingTools:
                 "success": False,
                 "error": str(e),
                 "execution_type": "market_order",
-                "details": {
-                    "market_id": market_id,
-                    "side": side,
-                    "size_usd": size
-                }
+                "details": {"market_id": market_id, "side": side, "size_usd": size},
             }
 
-    async def create_batch_orders(
-        self,
-        orders: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    async def create_batch_orders(self, orders: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Submit multiple orders in batch.
 
@@ -322,34 +381,33 @@ class TradingTools:
             for idx, order in enumerate(orders):
                 try:
                     result = await self.create_limit_order(
-                        market_id=order['market_id'],
-                        side=order['side'],
-                        price=order['price'],
-                        size=order['size'],
-                        order_type=order.get('order_type', 'GTC'),
-                        expiration=order.get('expiration')
+                        market_id=order["market_id"],
+                        side=order["side"],
+                        price=order["price"],
+                        size=order["size"],
+                        order_type=order.get("order_type", "GTC"),
+                        expiration=order.get("expiration"),
                     )
 
-                    results.append({
-                        "index": idx,
-                        "success": result.get('success', False),
-                        "order_id": result.get('order_id'),
-                        "details": result.get('details', {})
-                    })
+                    results.append(
+                        {
+                            "index": idx,
+                            "success": result.get("success", False),
+                            "order_id": result.get("order_id"),
+                            "details": result.get("details", {}),
+                        }
+                    )
 
-                    if result.get('success'):
+                    if result.get("success"):
                         successful += 1
                     else:
                         failed += 1
 
                 except Exception as e:
                     logger.error(f"Order {idx} failed: {e}")
-                    results.append({
-                        "index": idx,
-                        "success": False,
-                        "error": str(e),
-                        "details": order
-                    })
+                    results.append(
+                        {"index": idx, "success": False, "error": str(e), "details": order}
+                    )
                     failed += 1
 
             return {
@@ -357,23 +415,15 @@ class TradingTools:
                 "total_orders": len(orders),
                 "successful": successful,
                 "failed": failed,
-                "results": results
+                "results": results,
             }
 
         except Exception as e:
             logger.error(f"Batch order processing failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "total_orders": len(orders)
-            }
+            return {"success": False, "error": str(e), "total_orders": len(orders)}
 
     async def suggest_order_price(
-        self,
-        market_id: str,
-        side: str,
-        size: float,
-        strategy: str = 'mid'
+        self, market_id: str, side: str, size: float, strategy: str = "mid"
     ) -> Dict[str, Any]:
         """
         AI suggests optimal price for order.
@@ -391,23 +441,23 @@ class TradingTools:
             await self.rate_limiter.acquire(EndpointCategory.MARKET_DATA)
 
             # Get market data
-            market = await self.client.get_market(market_id)
-            tokens = market.get('tokens', [])
+            market = await self._get_market_with_gamma_fallback(market_id)
+            tokens = self._extract_market_tokens(market)
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]['token_id']
+            token_id = tokens[0]["token_id"]
             orderbook = await self.client.get_orderbook(token_id)
 
             # Parse orderbook
-            bids = orderbook.get('bids', [])
-            asks = orderbook.get('asks', [])
+            bids = orderbook.get("bids", [])
+            asks = orderbook.get("asks", [])
 
             if not bids or not asks:
                 raise ValueError("Insufficient orderbook depth")
 
-            best_bid = float(bids[0]['price'])
-            best_ask = float(asks[0]['price'])
+            best_bid = float(bids[0]["price"])
+            best_ask = float(asks[0]["price"])
             mid_price = (best_bid + best_ask) / 2
             spread = best_ask - best_bid
 
@@ -415,37 +465,43 @@ class TradingTools:
             strategy_lower = strategy.lower()
 
             # Calculate suggested price based on strategy
-            if side_upper == 'BUY':
-                if strategy_lower == 'aggressive':
+            if side_upper == "BUY":
+                if strategy_lower == "aggressive":
                     # Buy at ask (immediate execution)
                     suggested_price = best_ask
                     reasoning = f"Aggressive buy at best ask {best_ask:.4f} for immediate execution"
-                elif strategy_lower == 'passive':
+                elif strategy_lower == "passive":
                     # Place bid slightly above current best bid
                     suggested_price = best_bid + (spread * 0.1)
-                    reasoning = f"Passive buy at {suggested_price:.4f}, above best bid {best_bid:.4f}"
+                    reasoning = (
+                        f"Passive buy at {suggested_price:.4f}, above best bid {best_bid:.4f}"
+                    )
                 else:  # mid
                     # Place order at mid price
                     suggested_price = mid_price
                     reasoning = f"Mid-price buy at {suggested_price:.4f} (bid: {best_bid:.4f}, ask: {best_ask:.4f})"
             else:  # SELL
-                if strategy_lower == 'aggressive':
+                if strategy_lower == "aggressive":
                     # Sell at bid (immediate execution)
                     suggested_price = best_bid
-                    reasoning = f"Aggressive sell at best bid {best_bid:.4f} for immediate execution"
-                elif strategy_lower == 'passive':
+                    reasoning = (
+                        f"Aggressive sell at best bid {best_bid:.4f} for immediate execution"
+                    )
+                elif strategy_lower == "passive":
                     # Place ask slightly below current best ask
                     suggested_price = best_ask - (spread * 0.1)
-                    reasoning = f"Passive sell at {suggested_price:.4f}, below best ask {best_ask:.4f}"
+                    reasoning = (
+                        f"Passive sell at {suggested_price:.4f}, below best ask {best_ask:.4f}"
+                    )
                 else:  # mid
                     # Place order at mid price
                     suggested_price = mid_price
                     reasoning = f"Mid-price sell at {suggested_price:.4f} (bid: {best_bid:.4f}, ask: {best_ask:.4f})"
 
             # Calculate estimated fill probability (simplified)
-            if strategy_lower == 'aggressive':
+            if strategy_lower == "aggressive":
                 fill_probability = 0.95
-            elif strategy_lower == 'passive':
+            elif strategy_lower == "passive":
                 fill_probability = 0.4
             else:
                 fill_probability = 0.7
@@ -464,30 +520,24 @@ class TradingTools:
                     "best_ask": best_ask,
                     "mid_price": mid_price,
                     "spread": spread,
-                    "spread_pct": (spread / mid_price) * 100
+                    "spread_pct": (spread / mid_price) * 100,
                 },
                 "order_details": {
                     "side": side,
                     "size_usd": size,
                     "estimated_shares": size_shares,
                     "expected_value": expected_value,
-                    "estimated_fill_probability": fill_probability
-                }
+                    "estimated_fill_probability": fill_probability,
+                },
             }
 
         except Exception as e:
             logger.error(f"Failed to suggest order price: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
     # ========== ORDER MANAGEMENT TOOLS ==========
 
-    async def get_order_status(
-        self,
-        order_id: str
-    ) -> Dict[str, Any]:
+    async def get_order_status(self, order_id: str) -> Dict[str, Any]:
         """
         Check status of a specific order.
 
@@ -504,43 +554,34 @@ class TradingTools:
             orders = await self.client.get_orders()
 
             for order in orders:
-                if order.get('id') == order_id or order.get('orderID') == order_id:
-                    filled_amount = float(order.get('sizeMatched', 0))
-                    total_amount = float(order.get('originalSize', order.get('size', 0)))
+                if order.get("id") == order_id or order.get("orderID") == order_id:
+                    filled_amount = float(order.get("sizeMatched", 0))
+                    total_amount = float(order.get("originalSize", order.get("size", 0)))
 
-                    fill_percentage = (filled_amount / total_amount * 100) if total_amount > 0 else 0
+                    fill_percentage = (
+                        (filled_amount / total_amount * 100) if total_amount > 0 else 0
+                    )
 
                     return {
                         "success": True,
                         "order_id": order_id,
-                        "status": order.get('status', 'unknown'),
+                        "status": order.get("status", "unknown"),
                         "fill_status": {
                             "filled": filled_amount,
                             "total": total_amount,
                             "remaining": total_amount - filled_amount,
-                            "fill_percentage": fill_percentage
+                            "fill_percentage": fill_percentage,
                         },
-                        "details": order
+                        "details": order,
                     }
 
-            return {
-                "success": False,
-                "error": f"Order {order_id} not found",
-                "order_id": order_id
-            }
+            return {"success": False, "error": f"Order {order_id} not found", "order_id": order_id}
 
         except Exception as e:
             logger.error(f"Failed to get order status: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "order_id": order_id
-            }
+            return {"success": False, "error": str(e), "order_id": order_id}
 
-    async def get_open_orders(
-        self,
-        market_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    async def get_open_orders(self, market_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get all active/open orders.
 
@@ -557,14 +598,13 @@ class TradingTools:
 
             # Filter for open orders only
             open_orders = [
-                order for order in orders
-                if order.get('status') in ['open', 'live', 'pending']
+                order for order in orders if order.get("status") in ["open", "live", "pending"]
             ]
 
             # Organize by market
             by_market = {}
             for order in open_orders:
-                market = order.get('market', 'unknown')
+                market = order.get("market", "unknown")
                 if market not in by_market:
                     by_market[market] = []
                 by_market[market].append(order)
@@ -574,22 +614,19 @@ class TradingTools:
                 "total_open_orders": len(open_orders),
                 "markets": len(by_market),
                 "orders": open_orders,
-                "by_market": by_market
+                "by_market": by_market,
             }
 
         except Exception as e:
             logger.error(f"Failed to get open orders: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
     async def get_order_history(
         self,
         market_id: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
     ) -> Dict[str, Any]:
         """
         Get historical orders.
@@ -615,16 +652,18 @@ class TradingTools:
                 end_dt = datetime.fromisoformat(end_date) if end_date else None
 
                 for order in orders:
-                    order_time_str = order.get('timestamp') or order.get('created_at')
+                    order_time_str = order.get("timestamp") or order.get("created_at")
                     if order_time_str:
                         try:
-                            order_time = datetime.fromisoformat(order_time_str.replace('Z', '+00:00'))
+                            order_time = datetime.fromisoformat(
+                                order_time_str.replace("Z", "+00:00")
+                            )
                             if start_dt and order_time < start_dt:
                                 continue
                             if end_dt and order_time > end_dt:
                                 continue
                             filtered_orders.append(order)
-                        except:
+                        except Exception:
                             filtered_orders.append(order)
 
                 orders = filtered_orders
@@ -633,13 +672,10 @@ class TradingTools:
             orders = orders[:limit]
 
             # Calculate statistics
-            total_volume = sum(
-                float(o.get('size', 0)) * float(o.get('price', 0))
-                for o in orders
-            )
+            total_volume = sum(float(o.get("size", 0)) * float(o.get("price", 0)) for o in orders)
 
-            filled_orders = [o for o in orders if o.get('status') == 'filled']
-            cancelled_orders = [o for o in orders if o.get('status') == 'cancelled']
+            filled_orders = [o for o in orders if o.get("status") == "filled"]
+            cancelled_orders = [o for o in orders if o.get("status") == "cancelled"]
 
             return {
                 "success": True,
@@ -647,20 +683,14 @@ class TradingTools:
                 "filled": len(filled_orders),
                 "cancelled": len(cancelled_orders),
                 "total_volume_usd": total_volume,
-                "orders": orders
+                "orders": orders,
             }
 
         except Exception as e:
             logger.error(f"Failed to get order history: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
-    async def cancel_order(
-        self,
-        order_id: str
-    ) -> Dict[str, Any]:
+    async def cancel_order(self, order_id: str) -> Dict[str, Any]:
         """
         Cancel a specific order.
 
@@ -680,21 +710,15 @@ class TradingTools:
                 "order_id": order_id,
                 "cancelled": True,
                 "response": response,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
             logger.error(f"Failed to cancel order {order_id}: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "order_id": order_id
-            }
+            return {"success": False, "error": str(e), "order_id": order_id}
 
     async def cancel_market_orders(
-        self,
-        market_id: str,
-        asset_id: Optional[str] = None
+        self, market_id: str, asset_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Cancel all orders in a specific market.
@@ -712,17 +736,14 @@ class TradingTools:
             # Get open orders for market
             orders = await self.client.get_orders(market=market_id, asset_id=asset_id)
 
-            open_orders = [
-                o for o in orders
-                if o.get('status') in ['open', 'live', 'pending']
-            ]
+            open_orders = [o for o in orders if o.get("status") in ["open", "live", "pending"]]
 
             if not open_orders:
                 return {
                     "success": True,
                     "message": "No open orders to cancel",
                     "market_id": market_id,
-                    "cancelled_count": 0
+                    "cancelled_count": 0,
                 }
 
             # Cancel each order
@@ -730,7 +751,7 @@ class TradingTools:
             failed = []
 
             for order in open_orders:
-                order_id = order.get('id') or order.get('orderID')
+                order_id = order.get("id") or order.get("orderID")
                 try:
                     await self.client.cancel_order(order_id)
                     cancelled.append(order_id)
@@ -744,16 +765,12 @@ class TradingTools:
                 "cancelled_count": len(cancelled),
                 "failed_count": len(failed),
                 "cancelled_orders": cancelled,
-                "failed_orders": failed
+                "failed_orders": failed,
             }
 
         except Exception as e:
             logger.error(f"Failed to cancel market orders: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "market_id": market_id
-            }
+            return {"success": False, "error": str(e), "market_id": market_id}
 
     async def cancel_all_orders(self) -> Dict[str, Any]:
         """
@@ -770,7 +787,7 @@ class TradingTools:
             # Count cancelled orders
             cancelled_count = 0
             if isinstance(response, dict):
-                cancelled_count = len(response.get('cancelled', []))
+                cancelled_count = len(response.get("cancelled", []))
             elif isinstance(response, list):
                 cancelled_count = len(response)
 
@@ -778,23 +795,17 @@ class TradingTools:
                 "success": True,
                 "cancelled_count": cancelled_count,
                 "response": response,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
             logger.error(f"Failed to cancel all orders: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
     # ========== SMART TRADING TOOLS ==========
 
     async def execute_smart_trade(
-        self,
-        market_id: str,
-        intent: str,
-        max_budget: float
+        self, market_id: str, intent: str, max_budget: float
     ) -> Dict[str, Any]:
         """
         AI-powered trade execution with natural language intent.
@@ -816,46 +827,45 @@ class TradingTools:
             intent_lower = intent.lower()
 
             # Determine side
-            if 'buy' in intent_lower:
-                side = 'BUY'
-            elif 'sell' in intent_lower:
-                side = 'SELL'
+            if "buy" in intent_lower:
+                side = "BUY"
+            elif "sell" in intent_lower:
+                side = "SELL"
             else:
                 raise ValueError("Cannot determine BUY or SELL from intent")
 
             # Determine strategy
-            if any(word in intent_lower for word in ['fast', 'quick', 'now', 'immediately']):
-                strategy = 'aggressive'
-            elif any(word in intent_lower for word in ['patient', 'slow', 'good price', 'wait']):
-                strategy = 'passive'
+            if any(word in intent_lower for word in ["fast", "quick", "now", "immediately"]):
+                strategy = "aggressive"
+            elif any(word in intent_lower for word in ["patient", "slow", "good price", "wait"]):
+                strategy = "passive"
             else:
-                strategy = 'mid'
+                strategy = "mid"
 
             # Get price suggestion
             price_suggestion = await self.suggest_order_price(
-                market_id=market_id,
-                side=side,
-                size=max_budget,
-                strategy=strategy
+                market_id=market_id, side=side, size=max_budget, strategy=strategy
             )
 
-            if not price_suggestion.get('success'):
+            if not price_suggestion.get("success"):
                 raise ValueError(f"Failed to get price suggestion: {price_suggestion.get('error')}")
 
-            suggested_price = price_suggestion['suggested_price']
-            fill_probability = price_suggestion['order_details']['estimated_fill_probability']
+            suggested_price = price_suggestion["suggested_price"]
+            fill_probability = price_suggestion["order_details"]["estimated_fill_probability"]
 
             # Decide execution strategy
             execution_plan = []
 
-            if fill_probability > 0.8 or strategy == 'aggressive':
+            if fill_probability > 0.8 or strategy == "aggressive":
                 # Single aggressive order
-                execution_plan.append({
-                    "type": "market_order" if strategy == 'aggressive' else "limit_order",
-                    "price": suggested_price,
-                    "size": max_budget,
-                    "reasoning": "High fill probability, executing as single order"
-                })
+                execution_plan.append(
+                    {
+                        "type": "market_order" if strategy == "aggressive" else "limit_order",
+                        "price": suggested_price,
+                        "size": max_budget,
+                        "reasoning": "High fill probability, executing as single order",
+                    }
+                )
             else:
                 # Split into multiple orders for better execution
                 split_count = 2
@@ -863,41 +873,41 @@ class TradingTools:
 
                 for i in range(split_count):
                     # Adjust price slightly for each order
-                    price_adjustment = (i * 0.01) if side == 'BUY' else -(i * 0.01)
+                    price_adjustment = (i * 0.01) if side == "BUY" else -(i * 0.01)
                     adjusted_price = max(0.01, min(0.99, suggested_price + price_adjustment))
 
-                    execution_plan.append({
-                        "type": "limit_order",
-                        "price": adjusted_price,
-                        "size": size_per_order,
-                        "reasoning": f"Split order {i+1}/{split_count} for better execution"
-                    })
+                    execution_plan.append(
+                        {
+                            "type": "limit_order",
+                            "price": adjusted_price,
+                            "size": size_per_order,
+                            "reasoning": f"Split order {i+1}/{split_count} for better execution",
+                        }
+                    )
 
             # Execute orders
             executed_orders = []
             total_executed_value = 0.0
 
             for plan in execution_plan:
-                if plan['type'] == 'market_order':
+                if plan["type"] == "market_order":
                     result = await self.create_market_order(
-                        market_id=market_id,
-                        side=side,
-                        size=plan['size']
+                        market_id=market_id, side=side, size=plan["size"]
                     )
                 else:
                     result = await self.create_limit_order(
                         market_id=market_id,
                         side=side,
-                        price=plan['price'],
-                        size=plan['size'],
-                        order_type='GTC'
+                        price=plan["price"],
+                        size=plan["size"],
+                        order_type="GTC",
                     )
 
                 executed_orders.append(result)
-                if result.get('success'):
-                    total_executed_value += plan['size']
+                if result.get("success"):
+                    total_executed_value += plan["size"]
 
-            successful_orders = [o for o in executed_orders if o.get('success')]
+            successful_orders = [o for o in executed_orders if o.get("success")]
 
             return {
                 "success": True,
@@ -908,27 +918,19 @@ class TradingTools:
                     "successful": len(successful_orders),
                     "failed": len(executed_orders) - len(successful_orders),
                     "total_value": total_executed_value,
-                    "budget_used": (total_executed_value / max_budget) * 100
+                    "budget_used": (total_executed_value / max_budget) * 100,
                 },
                 "execution_plan": execution_plan,
                 "executed_orders": executed_orders,
-                "price_analysis": price_suggestion
+                "price_analysis": price_suggestion,
             }
 
         except Exception as e:
             logger.error(f"Smart trade execution failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "intent": intent,
-                "max_budget": max_budget
-            }
+            return {"success": False, "error": str(e), "intent": intent, "max_budget": max_budget}
 
     async def rebalance_position(
-        self,
-        market_id: str,
-        target_size: Optional[float] = None,
-        max_slippage: float = 0.02
+        self, market_id: str, target_size: Optional[float] = None, max_slippage: float = 0.02
     ) -> Dict[str, Any]:
         """
         Adjust position to target size (or close if target_size is None).
@@ -948,12 +950,9 @@ class TradingTools:
             positions_data = await self.client.get_positions()
 
             current_size = 0.0
-            current_position = None
-
             for pos in positions_data:
-                if pos.get('market') == market_id or pos.get('condition_id') == market_id:
-                    current_size += float(pos.get('size', 0)) * float(pos.get('price', 0))
-                    current_position = pos
+                if pos.get("market") == market_id or pos.get("condition_id") == market_id:
+                    current_size += float(pos.get("size", 0)) * float(pos.get("price", 0))
 
             if target_size is None:
                 target_size = 0.0
@@ -967,37 +966,37 @@ class TradingTools:
                     "message": "Position already at target",
                     "current_size": current_size,
                     "target_size": target_size,
-                    "adjustment_needed": adjustment
+                    "adjustment_needed": adjustment,
                 }
 
             # Determine side and size
             if adjustment > 0:
                 # Need to buy more
-                side = 'BUY'
+                side = "BUY"
                 size = abs(adjustment)
             else:
                 # Need to sell
-                side = 'SELL'
+                side = "SELL"
                 size = abs(adjustment)
 
             # Get market data for slippage check
-            market = await self.client.get_market(market_id)
-            tokens = market.get('tokens', [])
+            market = await self._get_market_with_gamma_fallback(market_id)
+            tokens = self._extract_market_tokens(market)
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
-            token_id = tokens[0]['token_id']
+            token_id = tokens[0]["token_id"]
             orderbook = await self.client.get_orderbook(token_id)
 
-            bids = orderbook.get('bids', [])
-            asks = orderbook.get('asks', [])
+            bids = orderbook.get("bids", [])
+            asks = orderbook.get("asks", [])
 
-            best_bid = float(bids[0]['price']) if bids else 0.0
-            best_ask = float(asks[0]['price']) if asks else 1.0
+            best_bid = float(bids[0]["price"]) if bids else 0.0
+            best_ask = float(asks[0]["price"]) if asks else 1.0
             mid_price = (best_bid + best_ask) / 2
 
             # Calculate expected execution price
-            if side == 'BUY':
+            if side == "BUY":
                 expected_price = best_ask
                 max_price = mid_price * (1 + max_slippage)
                 if expected_price > max_price:
@@ -1018,15 +1017,11 @@ class TradingTools:
             logger.info(f"Rebalancing: {side} ${size} @ ~{expected_price:.4f}")
 
             result = await self.create_limit_order(
-                market_id=market_id,
-                side=side,
-                price=expected_price,
-                size=size,
-                order_type='GTC'
+                market_id=market_id, side=side, price=expected_price, size=size, order_type="GTC"
             )
 
             return {
-                "success": result.get('success', False),
+                "success": result.get("success", False),
                 "rebalance_summary": {
                     "current_size": current_size,
                     "target_size": target_size,
@@ -1035,9 +1030,9 @@ class TradingTools:
                     "size": size,
                     "execution_price": expected_price,
                     "mid_price": mid_price,
-                    "slippage": abs(expected_price - mid_price) / mid_price
+                    "slippage": abs(expected_price - mid_price) / mid_price,
                 },
-                "order_result": result
+                "order_result": result,
             }
 
         except Exception as e:
@@ -1046,27 +1041,26 @@ class TradingTools:
                 "success": False,
                 "error": str(e),
                 "market_id": market_id,
-                "target_size": target_size
+                "target_size": target_size,
             }
 
     # ========== HELPER METHODS ==========
 
-    def _convert_positions(
-        self,
-        positions_data: List[Dict[str, Any]]
-    ) -> List[Position]:
+    def _convert_positions(self, positions_data: List[Dict[str, Any]]) -> List[Position]:
         """Convert raw position data to Position objects."""
         positions = []
 
         for pos_data in positions_data:
             try:
                 position = Position(
-                    token_id=pos_data.get('asset_id', ''),
-                    market_id=pos_data.get('market', ''),
-                    size=float(pos_data.get('size', 0)),
-                    avg_price=float(pos_data.get('avg_price', 0)),
-                    current_price=float(pos_data.get('current_price', pos_data.get('avg_price', 0))),
-                    unrealized_pnl=float(pos_data.get('unrealized_pnl', 0))
+                    token_id=pos_data.get("asset_id", ""),
+                    market_id=pos_data.get("market", ""),
+                    size=float(pos_data.get("size", 0)),
+                    avg_price=float(pos_data.get("avg_price", 0)),
+                    current_price=float(
+                        pos_data.get("current_price", pos_data.get("avg_price", 0))
+                    ),
+                    unrealized_pnl=float(pos_data.get("unrealized_pnl", 0)),
                 )
                 positions.append(position)
             except Exception as e:
@@ -1095,39 +1089,32 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market condition ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market condition ID"},
                     "side": {
                         "type": "string",
                         "enum": ["BUY", "SELL"],
-                        "description": "Order side"
+                        "description": "Order side",
                     },
                     "price": {
                         "type": "number",
                         "minimum": 0.01,
                         "maximum": 0.99,
-                        "description": "Limit price (0.01-0.99)"
+                        "description": "Limit price (0.01-0.99)",
                     },
-                    "size": {
-                        "type": "number",
-                        "minimum": 1,
-                        "description": "Order size in USD"
-                    },
+                    "size": {"type": "number", "minimum": 1, "description": "Order size in USD"},
                     "order_type": {
                         "type": "string",
                         "enum": ["GTC", "GTD", "FOK", "FAK"],
                         "default": "GTC",
-                        "description": "Order type"
+                        "description": "Order type",
                     },
                     "expiration": {
                         "type": "integer",
-                        "description": "Unix timestamp for GTD orders (optional)"
-                    }
+                        "description": "Unix timestamp for GTD orders (optional)",
+                    },
                 },
-                "required": ["market_id", "side", "price", "size"]
-            }
+                "required": ["market_id", "side", "price", "size"],
+            },
         ),
         types.Tool(
             name="create_market_order",
@@ -1138,23 +1125,16 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market condition ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market condition ID"},
                     "side": {
                         "type": "string",
                         "enum": ["BUY", "SELL"],
-                        "description": "Order side"
+                        "description": "Order side",
                     },
-                    "size": {
-                        "type": "number",
-                        "minimum": 1,
-                        "description": "Order size in USD"
-                    }
+                    "size": {"type": "number", "minimum": 1, "description": "Order size in USD"},
                 },
-                "required": ["market_id", "side", "size"]
-            }
+                "required": ["market_id", "side", "size"],
+            },
         ),
         types.Tool(
             name="create_batch_orders",
@@ -1176,15 +1156,15 @@ def get_tool_definitions() -> List[types.Tool]:
                                 "price": {"type": "number"},
                                 "size": {"type": "number"},
                                 "order_type": {"type": "string"},
-                                "expiration": {"type": "integer"}
+                                "expiration": {"type": "integer"},
                             },
-                            "required": ["market_id", "side", "price", "size"]
+                            "required": ["market_id", "side", "price", "size"],
                         },
-                        "description": "List of orders to submit"
+                        "description": "List of orders to submit",
                     }
                 },
-                "required": ["orders"]
-            }
+                "required": ["orders"],
+            },
         ),
         types.Tool(
             name="suggest_order_price",
@@ -1195,44 +1175,32 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market condition ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market condition ID"},
                     "side": {
                         "type": "string",
                         "enum": ["BUY", "SELL"],
-                        "description": "Order side"
+                        "description": "Order side",
                     },
-                    "size": {
-                        "type": "number",
-                        "description": "Order size in USD"
-                    },
+                    "size": {"type": "number", "description": "Order size in USD"},
                     "strategy": {
                         "type": "string",
                         "enum": ["aggressive", "passive", "mid"],
                         "default": "mid",
-                        "description": "Pricing strategy"
-                    }
+                        "description": "Pricing strategy",
+                    },
                 },
-                "required": ["market_id", "side", "size"]
-            }
+                "required": ["market_id", "side", "size"],
+            },
         ),
-
         # Order Management Tools
         types.Tool(
             name="get_order_status",
             description="Check status and fill details of a specific order.",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "order_id": {
-                        "type": "string",
-                        "description": "Order ID to check"
-                    }
-                },
-                "required": ["order_id"]
-            }
+                "properties": {"order_id": {"type": "string", "description": "Order ID to check"}},
+                "required": ["order_id"],
+            },
         ),
         types.Tool(
             name="get_open_orders",
@@ -1240,12 +1208,9 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Optional market filter"
-                    }
-                }
-            }
+                    "market_id": {"type": "string", "description": "Optional market filter"}
+                },
+            },
         ),
         types.Tool(
             name="get_order_history",
@@ -1253,39 +1218,25 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Optional market filter"
-                    },
-                    "start_date": {
-                        "type": "string",
-                        "description": "Start date (ISO format)"
-                    },
-                    "end_date": {
-                        "type": "string",
-                        "description": "End date (ISO format)"
-                    },
+                    "market_id": {"type": "string", "description": "Optional market filter"},
+                    "start_date": {"type": "string", "description": "Start date (ISO format)"},
+                    "end_date": {"type": "string", "description": "End date (ISO format)"},
                     "limit": {
                         "type": "integer",
                         "default": 100,
-                        "description": "Maximum number of orders"
-                    }
-                }
-            }
+                        "description": "Maximum number of orders",
+                    },
+                },
+            },
         ),
         types.Tool(
             name="cancel_order",
             description="Cancel a specific open order by ID.",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "order_id": {
-                        "type": "string",
-                        "description": "Order ID to cancel"
-                    }
-                },
-                "required": ["order_id"]
-            }
+                "properties": {"order_id": {"type": "string", "description": "Order ID to cancel"}},
+                "required": ["order_id"],
+            },
         ),
         types.Tool(
             name="cancel_market_orders",
@@ -1293,27 +1244,17 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market condition ID"
-                    },
-                    "asset_id": {
-                        "type": "string",
-                        "description": "Optional asset/token filter"
-                    }
+                    "market_id": {"type": "string", "description": "Market condition ID"},
+                    "asset_id": {"type": "string", "description": "Optional asset/token filter"},
                 },
-                "required": ["market_id"]
-            }
+                "required": ["market_id"],
+            },
         ),
         types.Tool(
             name="cancel_all_orders",
             description="Cancel all open orders across all markets. Use with caution.",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
+            inputSchema={"type": "object", "properties": {}},
         ),
-
         # Smart Trading Tools
         types.Tool(
             name="execute_smart_trade",
@@ -1325,21 +1266,12 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market condition ID"
-                    },
-                    "intent": {
-                        "type": "string",
-                        "description": "Natural language trading intent"
-                    },
-                    "max_budget": {
-                        "type": "number",
-                        "description": "Maximum budget in USD"
-                    }
+                    "market_id": {"type": "string", "description": "Market condition ID"},
+                    "intent": {"type": "string", "description": "Natural language trading intent"},
+                    "max_budget": {"type": "number", "description": "Maximum budget in USD"},
                 },
-                "required": ["market_id", "intent", "max_budget"]
-            }
+                "required": ["market_id", "intent", "max_budget"],
+            },
         ),
         types.Tool(
             name="rebalance_position",
@@ -1350,21 +1282,18 @@ def get_tool_definitions() -> List[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "market_id": {
-                        "type": "string",
-                        "description": "Market condition ID"
-                    },
+                    "market_id": {"type": "string", "description": "Market condition ID"},
                     "target_size": {
                         "type": "number",
-                        "description": "Target position size in USD (null to close)"
+                        "description": "Target position size in USD (null to close)",
                     },
                     "max_slippage": {
                         "type": "number",
                         "default": 0.02,
-                        "description": "Maximum acceptable slippage (0.02 = 2%)"
-                    }
+                        "description": "Maximum acceptable slippage (0.02 = 2%)",
+                    },
                 },
-                "required": ["market_id"]
-            }
+                "required": ["market_id"],
+            },
         ),
     ]

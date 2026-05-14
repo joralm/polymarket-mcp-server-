@@ -220,9 +220,7 @@ class PolymarketClient:
                 ]
                 return normalized
 
-            raise TypeError(
-                f"Unsupported orderbook response type: {type(orderbook).__name__}"
-            )
+            raise TypeError(f"Unsupported orderbook response type: {type(orderbook).__name__}")
 
         except Exception as e:
             logger.error(f"Failed to fetch orderbook for {token_id}: {e}")
@@ -475,9 +473,7 @@ class PolymarketClient:
                 balance_data = get_balance_allowance_fn(params)
                 if isinstance(balance_data, dict):
                     normalized = dict(balance_data)
-                    normalized.setdefault(
-                        "balance", str(self._extract_numeric_balance(normalized))
-                    )
+                    normalized.setdefault("balance", str(self._extract_numeric_balance(normalized)))
                     return normalized
                 return {"balance": str(balance_data)}
 

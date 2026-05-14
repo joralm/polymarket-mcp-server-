@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from py_clob_client.clob_types import AssetType
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
+from polymarket_mcp.tools.trading import TradingTools
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
 # ---------------------------------------------------------------------------
@@ -364,7 +365,9 @@ class TestStreamableHTTPTransport:
 
         # The critical case: POST /mcp (no trailing slash) must NOT return 404
         resp = client.post("/mcp", content=b"{}", headers={"content-type": "application/json"})
-        assert resp.status_code != 404, f"POST /mcp returned 404 — routing fix regressed (got {resp.status_code})"
+        assert (
+            resp.status_code != 404
+        ), f"POST /mcp returned 404 — routing fix regressed (got {resp.status_code})"
 
         # Trailing slash variant should also work
         resp = client.post("/mcp/", content=b"{}", headers={"content-type": "application/json"})
@@ -519,6 +522,58 @@ class TestCriticalRuntimeFixes:
         finally:
             server_module.config = original_config
             server_module.polymarket_client = original_polymarket_client
+            server_module.safety_limits = original_safety_limits
+            server_module.rate_limiter = original_rate_limiter
+            server_module.trading_tools = original_trading_tools
+            server_module.websocket_manager = original_websocket_manager
+
+
+class TestTradingMarketIdCompatibility:
+    """Regression tests for accepting Gamma market IDs in trading tools."""
+
+    @pytest.mark.asyncio
+    async def test_get_market_with_gamma_fallback_resolves_condition_id(self):
+        """Numeric Gamma IDs should resolve to CLOB condition IDs before trading."""
+        mock_client = MagicMock()
+        mock_client.get_market = AsyncMock(
+            side_effect=[
+                RuntimeError("market not found"),
+                {"tokens": [{"token_id": "9043581125"}], "volume": "1000"},
+            ]
+        )
+
+        trading_tools = TradingTools(
+            client=mock_client,
+            safety_limits=MagicMock(),
+            config=MagicMock(GAMMA_API_URL="https://gamma-api.polymarket.com"),
+        )
+        trading_tools.rate_limiter = AsyncMock()
+        trading_tools.rate_limiter.acquire = AsyncMock(return_value=0.0)
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {"conditionId": "0xabc123"}
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.tools.trading.httpx.AsyncClient", return_value=async_client_cm):
+            market = await trading_tools._get_market_with_gamma_fallback("540819")
+
+        assert market["tokens"][0]["token_id"] == "9043581125"
+        assert mock_client.get_market.await_args_list[0].args[0] == "540819"
+        assert mock_client.get_market.await_args_list[1].args[0] == "0xabc123"
+
+    def test_extract_market_tokens_supports_gamma_clob_token_ids(self):
+        """Gamma `clobTokenIds` payloads should be normalized into token dicts."""
+        market = {"clobTokenIds": '["111","222"]'}
+
+        tokens = TradingTools._extract_market_tokens(market)
+        assert tokens == [{"token_id": "111"}, {"token_id": "222"}]
 
 
 class TestSDKCompatibility:
@@ -600,10 +655,6 @@ class TestSDKCompatibility:
 
         assert orderbook["bids"][0]["price"] == "0.51"
         assert orderbook["asks"][0]["price"] == "0.52"
-            server_module.safety_limits = original_safety_limits
-            server_module.rate_limiter = original_rate_limiter
-            server_module.trading_tools = original_trading_tools
-            server_module.websocket_manager = original_websocket_manager
 
     @pytest.mark.asyncio
     async def test_server_routes_realtime_calls_through_registered_manager(self):
@@ -816,7 +867,9 @@ class TestSDKCompatibility:
             with (
                 patch.object(server_module, "load_config", return_value=fake_config),
                 patch.object(server_module, "create_polymarket_client", return_value=fake_client),
-                patch.object(server_module, "create_safety_limits_from_config", return_value=MagicMock()),
+                patch.object(
+                    server_module, "create_safety_limits_from_config", return_value=MagicMock()
+                ),
                 patch.object(server_module, "get_rate_limiter", return_value=MagicMock()),
                 patch.object(server_module, "WebSocketManager") as mock_ws_manager,
                 patch.object(server_module.realtime, "set_websocket_manager") as mock_set_manager,
@@ -851,7 +904,9 @@ class TestSDKCompatibility:
             with (
                 patch.object(server_module.market_discovery, "get_tools", return_value=[]),
                 patch.object(server_module.market_analysis, "get_tools", return_value=[]),
-                patch.object(server_module.realtime, "get_tools", return_value=[MagicMock()]) as mock_realtime,
+                patch.object(
+                    server_module.realtime, "get_tools", return_value=[MagicMock()]
+                ) as mock_realtime,
             ):
                 tools = await server_module.list_tools()
 
