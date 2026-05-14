@@ -679,6 +679,45 @@ class TestSDKCompatibility:
         assert balance["balance"] == "123.45"
 
     @pytest.mark.asyncio
+    async def test_get_balance_prefers_available_over_total_balance(self):
+        """Canonical `balance` should reflect spendable cash, not locked-inclusive total."""
+        client = self._build_client()
+
+        class MixedBalanceClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"balance": "1.93", "available": "0.93", "allowance": "1000"}
+
+        client.client = MixedBalanceClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "0.93"
+        assert balance["available"] == "0.93"
+        assert balance["currency"] == "USDC"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_parses_currency_formatted_values(self):
+        """Balance parser should tolerate mixed currency symbols/labels from SDK variants.
+
+        Some wrappers/localized intermediaries may include display symbols even
+        when underlying units are USDC. We canonicalize spendable balance from
+        the `available` field.
+        """
+        client = self._build_client()
+
+        class CurrencyFormattedClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"available": "€0.93 USDC", "balance": "$1.93"}
+
+        client.client = CurrencyFormattedClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "0.93"
+        assert balance["available"] == "0.93"
+        assert balance["currency"] == "USDC"
+
+    @pytest.mark.asyncio
     async def test_get_positions_falls_back_to_data_api(self):
         """Client should fallback to Data API when SDK lacks get_positions()."""
         client = self._build_client()

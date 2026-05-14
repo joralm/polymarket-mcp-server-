@@ -5,6 +5,8 @@ Handles L1 (private key) and L2 (API key) authentication.
 
 from typing import Dict, Any, List, Optional
 import logging
+import re
+from itertools import chain
 import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import (
@@ -526,35 +528,83 @@ class PolymarketClient:
             raise
 
     @staticmethod
-    def _extract_numeric_balance(balance_data: Dict[str, Any]) -> float:
-        """Extract a numeric balance from known balance/allowance payload shapes."""
-        candidates = [
-            balance_data.get("balance"),
+    def _coerce_numeric(value: Any) -> Optional[float]:
+        """Parse numeric-like values (including currency-formatted strings)."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            # Extract the first signed decimal number from values like
+            # "$1.93", "€0.93", and "0.93 USDC".
+            # Lookarounds avoid partial matches inside malformed tokens.
+            match = re.search(r"(?<![0-9.])[+-]?(?:\d+\.\d+|\d+|\.\d+)(?![0-9.])", cleaned)
+            if not match:
+                return None
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _extract_numeric_balance(cls, balance_data: Dict[str, Any]) -> float:
+        """Extract spendable USDC balance from known balance/allowance payload shapes."""
+        # Prefer available/spendable fields over total balance to align with
+        # CLOB `balance-allowance` semantics (usable cash vs. locked funds).
+        available_candidates = [
             balance_data.get("available"),
             balance_data.get("available_balance"),
+        ]
+        total_candidates = [
+            balance_data.get("balance"),
             balance_data.get("amount"),
+            balance_data.get("value"),
         ]
 
         for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
             nested = balance_data.get(nested_key)
             if isinstance(nested, dict):
-                candidates.extend(
+                available_candidates.extend(
                     [
-                        nested.get("balance"),
                         nested.get("available"),
                         nested.get("available_balance"),
+                    ]
+                )
+                total_candidates.extend(
+                    [
+                        nested.get("balance"),
                         nested.get("amount"),
                         nested.get("value"),
                     ]
                 )
 
-        for value in candidates:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                continue
+        for value in chain(available_candidates, total_candidates):
+            parsed = cls._coerce_numeric(value)
+            if parsed is not None:
+                return parsed
 
         return 0.0
+
+    @classmethod
+    def _normalize_balance_payload(cls, balance_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize balance payload to include canonical spendable `balance` in USDC."""
+        normalized = dict(balance_data)
+        available_numeric = cls._coerce_numeric(normalized.get("available"))
+        if available_numeric is None:
+            available_numeric = cls._coerce_numeric(normalized.get("available_balance"))
+        if available_numeric is not None:
+            normalized["available"] = str(available_numeric)
+            normalized["available_balance"] = str(available_numeric)
+        # Keep compatibility with existing callers/tests that consume string balances.
+        normalized["balance"] = (
+            str(available_numeric)
+            if available_numeric is not None
+            else str(cls._extract_numeric_balance(normalized))
+        )
+        normalized.setdefault("currency", "USDC")
+        return normalized
 
     async def get_balance(self) -> Dict[str, Any]:
         """
@@ -596,7 +646,7 @@ class PolymarketClient:
                 balance_data = get_balance_fn()
 
             if isinstance(balance_data, dict):
-                return balance_data
+                return self._normalize_balance_payload(balance_data)
             return {"balance": str(balance_data)}
 
         # SDK >=0.28 exposes get_balance_allowance() instead.
@@ -605,9 +655,7 @@ class PolymarketClient:
             params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
             balance_data = get_balance_allowance_fn(params)
             if isinstance(balance_data, dict):
-                normalized = dict(balance_data)
-                normalized.setdefault("balance", str(self._extract_numeric_balance(normalized)))
-                return normalized
+                return self._normalize_balance_payload(balance_data)
             return {"balance": str(balance_data)}
 
         raise AttributeError("ClobClient does not expose a supported balance method")
