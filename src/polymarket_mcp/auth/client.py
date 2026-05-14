@@ -6,6 +6,7 @@ Handles L1 (private key) and L2 (API key) authentication.
 from typing import Dict, Any, List, Optional
 import logging
 import re
+from itertools import chain
 import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import (
@@ -537,7 +538,8 @@ class PolymarketClient:
             cleaned = value.strip().replace(",", "")
             # Extract the first signed decimal number from values like
             # "$1.93", "€0.93", and "0.93 USDC".
-            match = re.search(r"[+-]?(?:\d+\.\d+|\d+|\.\d+)", cleaned)
+            # Lookarounds avoid partial matches inside malformed tokens.
+            match = re.search(r"(?<![0-9.])[+-]?(?:\d+\.\d+|\d+|\.\d+)(?![0-9.])", cleaned)
             if not match:
                 return None
             try:
@@ -578,7 +580,7 @@ class PolymarketClient:
                     ]
                 )
 
-        for value in available_candidates + total_candidates:
+        for value in chain(available_candidates, total_candidates):
             parsed = cls._coerce_numeric(value)
             if parsed is not None:
                 return parsed
@@ -589,7 +591,18 @@ class PolymarketClient:
     def _normalize_balance_payload(cls, balance_data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize balance payload to include canonical spendable `balance` in USDC."""
         normalized = dict(balance_data)
-        normalized["balance"] = str(cls._extract_numeric_balance(normalized))
+        available_numeric = cls._coerce_numeric(normalized.get("available"))
+        if available_numeric is None:
+            available_numeric = cls._coerce_numeric(normalized.get("available_balance"))
+        if available_numeric is not None:
+            normalized["available"] = str(available_numeric)
+            normalized["available_balance"] = str(available_numeric)
+        # Keep compatibility with existing callers/tests that consume string balances.
+        normalized["balance"] = (
+            str(available_numeric)
+            if available_numeric is not None
+            else str(cls._extract_numeric_balance(normalized))
+        )
         normalized.setdefault("currency", "USDC")
         return normalized
 

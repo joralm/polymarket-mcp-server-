@@ -697,7 +697,12 @@ class TestSDKCompatibility:
 
     @pytest.mark.asyncio
     async def test_get_balance_parses_currency_formatted_values(self):
-        """Balance parser should tolerate currency symbols/labels from SDK variants."""
+        """Balance parser should tolerate mixed currency symbols/labels from SDK variants.
+
+        Some wrappers/localized intermediaries may include display symbols even
+        when underlying units are USDC. We canonicalize spendable balance from
+        the `available` field.
+        """
         client = self._build_client()
 
         class CurrencyFormattedClient:
@@ -709,6 +714,7 @@ class TestSDKCompatibility:
         balance = await client.get_balance()
 
         assert balance["balance"] == "0.93"
+        assert balance["available"] == "0.93"
         assert balance["currency"] == "USDC"
 
     @pytest.mark.asyncio
