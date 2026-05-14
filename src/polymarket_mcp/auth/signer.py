@@ -12,10 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class SignatureType:
-    """Signature types supported by Polymarket"""
+    """Signature types supported by this server"""
     EOA = 0  # Externally Owned Account
-    POLY_PROXY = 1  # Polymarket Proxy
-    GNOSIS_SAFE = 2  # Gnosis Safe Multisig
 
 
 # EIP-712 domain for Polymarket CTF Exchange
@@ -54,17 +52,12 @@ class OrderSigner:
 
         logger.info(f"OrderSigner initialized for address: {self.address}")
 
-    def sign_order(
-        self,
-        order: Dict[str, Any],
-        signature_type: int = SignatureType.EOA
-    ) -> str:
+    def sign_order(self, order: Dict[str, Any]) -> str:
         """
         Sign an order using EIP-712.
 
         Args:
             order: Order dictionary with required fields
-            signature_type: Type of signature (default: EOA)
 
         Returns:
             Signature as hex string

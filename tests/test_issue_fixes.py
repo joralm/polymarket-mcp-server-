@@ -529,29 +529,11 @@ class TestCriticalRuntimeFixes:
             server_module.websocket_manager = original_websocket_manager
 
 
-class TestDepositWalletFlowConfig:
-    """Regression tests for Polymarket deposit-wallet defaults."""
-
-    def test_signature_type_defaults_to_proxy_and_sets_funder(self):
-        config = PolymarketConfig(
-            POLYGON_PRIVATE_KEY="0" * 64,
-            POLYGON_ADDRESS="0x" + "1" * 40,
-        )
-        assert config.POLYMARKET_SIGNATURE_TYPE == 1
-        assert config.POLYMARKET_FUNDER == config.POLYGON_ADDRESS
-
-    def test_eoa_signature_type_keeps_funder_optional(self):
-        config = PolymarketConfig(
-            POLYGON_PRIVATE_KEY="0" * 64,
-            POLYGON_ADDRESS="0x" + "1" * 40,
-            POLYMARKET_SIGNATURE_TYPE=0,
-            POLYMARKET_FUNDER=None,
-        )
-        assert config.POLYMARKET_SIGNATURE_TYPE == 0
-        assert config.POLYMARKET_FUNDER is None
+class TestWalletConfigFlow:
+    """Regression tests for MetaMask wallet configuration flow."""
 
     @pytest.mark.asyncio
-    async def test_web_dashboard_passes_signature_type_and_funder_to_client(self):
+    async def test_web_dashboard_initializes_client_with_wallet_and_api_credentials(self):
         import polymarket_mcp.web.app as web_app_module
 
         fake_config = PolymarketConfig(
@@ -568,10 +550,9 @@ class TestDepositWalletFlowConfig:
         ):
             await web_app_module.load_mcp_config()
 
-        assert (
-            mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
-        )
-        assert mock_create.call_args.kwargs["funder"] == fake_config.POLYMARKET_FUNDER
+        assert mock_create.call_args.kwargs["private_key"] == fake_config.POLYGON_PRIVATE_KEY
+        assert mock_create.call_args.kwargs["address"] == fake_config.POLYGON_ADDRESS
+        assert mock_create.call_args.kwargs["chain_id"] == fake_config.POLYMARKET_CHAIN_ID
 
 
 class TestTradingMarketIdCompatibility:
@@ -678,9 +659,8 @@ class TestSDKCompatibility:
             )
 
         error_message = str(exc_info.value)
-        assert "deposit-wallet flow" in error_message
-        assert "POLYMARKET_SIGNATURE_TYPE=1" in error_message
-        assert "POLYMARKET_FUNDER" in error_message
+        assert "MetaMask-linked" in error_message
+        assert "maker address" in error_message
 
     @pytest.mark.asyncio
     async def test_get_balance_falls_back_to_get_balance_allowance(self):
@@ -1477,8 +1457,6 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_API_KEY = "k"
         mock_config.POLYMARKET_API_SECRET = "s"
         mock_config.POLYMARKET_PASSPHRASE = "p"
-        mock_config.POLYMARKET_SIGNATURE_TYPE = None
-        mock_config.POLYMARKET_FUNDER = None
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"
 

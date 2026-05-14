@@ -213,8 +213,6 @@ DEMO_MODE=false
 # Your wallet credentials
 POLYGON_PRIVATE_KEY=abcd1234...  # 64 hex characters
 POLYGON_ADDRESS=0x1234...         # 42 characters
-POLYMARKET_SIGNATURE_TYPE=1
-POLYMARKET_FUNDER=0x1234...
 
 # Safety limits (recommended)
 MAX_ORDER_SIZE_USD=1000
@@ -229,8 +227,8 @@ REQUIRE_CONFIRMATION_ABOVE_USD=500
 ```
 
 If you see `maker address not allowed, please use the deposit wallet flow`, your wallet
-configuration is incompatible with trading. Use the Polymarket deposit-wallet flow and keep
-`POLYMARKET_SIGNATURE_TYPE=1` with `POLYMARKET_FUNDER=POLYGON_ADDRESS`.
+configuration is incompatible with trading. Use a MetaMask-linked wallet in the Polymarket
+deposit-wallet flow.
 
 ### Safety Recommendations
 

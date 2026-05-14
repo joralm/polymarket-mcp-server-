@@ -83,8 +83,6 @@ class PolymarketClient:
         api_secret: Optional[str] = None,
         passphrase: Optional[str] = None,
         host: str = "https://clob.polymarket.com",
-        signature_type: Optional[int] = None,
-        funder: Optional[str] = None,
     ):
         """
         Initialize Polymarket client.
@@ -97,17 +95,11 @@ class PolymarketClient:
             api_secret: Optional L2 API secret (same as passphrase)
             passphrase: Optional L2 API passphrase
             host: CLOB API host URL
-            signature_type: Order signature type (0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE).
-                Set to 1 when using a Polymarket proxy wallet (address differs from key-derived address).
-            funder: Funder address for POLY_PROXY or POLY_GNOSIS_SAFE wallets.
-                Should equal ``address`` for proxy wallets.  Leave None for plain EOA wallets.
         """
         self.private_key = private_key
         self.address = address.lower()
         self.chain_id = chain_id
         self.host = host
-        self.signature_type = signature_type
-        self.funder = funder
 
         # Initialize order signer
         self.signer = OrderSigner(private_key, chain_id)
@@ -131,8 +123,7 @@ class PolymarketClient:
         logger.info(
             f"PolymarketClient initialized for {self.address} "
             f"(chain_id: {chain_id}, L2 auth: {self.api_creds is not None}, "
-            f"sig_type: {self.signature_type if self.signature_type is not None else 'EOA(default)'}, "
-            f"funder: {'set' if self.funder else 'none'})"
+            "wallet_flow: metamask)"
         )
 
     def _initialize_client(self) -> None:
@@ -148,15 +139,6 @@ class PolymarketClient:
             # Add L2 credentials if available
             if self.api_creds:
                 client_args["creds"] = self.api_creds
-
-            # Pass signature_type and funder when explicitly configured.
-            # This is required for Polymarket proxy wallets (signature_type=1/POLY_PROXY)
-            # where the maker address differs from the key-derived signer address.
-            if self.signature_type is not None:
-                client_args["signature_type"] = self.signature_type
-
-            if self.funder is not None:
-                client_args["funder"] = self.funder
 
             # Create client
             self.client = ClobClient(**client_args)
@@ -417,10 +399,8 @@ class PolymarketClient:
             error_text = str(e).lower()
             if e.status_code == 400 and "maker address not allowed" in error_text:
                 raise RuntimeError(
-                    "Polymarket rejected this maker address for trading. Use the Polymarket "
-                    "deposit-wallet flow (MetaMask-linked wallet), configure "
-                    "POLYMARKET_SIGNATURE_TYPE=1, and set POLYMARKET_FUNDER to your "
-                    "POLYGON_ADDRESS."
+                    "Polymarket rejected this maker address for trading. "
+                    "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
             logger.error(f"Failed to post order: {e}")
             raise
@@ -728,8 +708,6 @@ def create_polymarket_client(
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
     passphrase: Optional[str] = None,
-    signature_type: Optional[int] = None,
-    funder: Optional[str] = None,
 ) -> PolymarketClient:
     """
     Create PolymarketClient instance.
@@ -741,9 +719,6 @@ def create_polymarket_client(
         api_key: Optional L2 API key
         api_secret: Optional L2 API secret
         passphrase: Optional L2 API passphrase
-        signature_type: Order signature type (0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE).
-            Required for Polymarket proxy wallets to avoid order_version_mismatch errors.
-        funder: Funder address for POLY_PROXY / POLY_GNOSIS_SAFE wallets (typically equals address).
 
     Returns:
         PolymarketClient instance
@@ -755,6 +730,4 @@ def create_polymarket_client(
         api_key=api_key,
         api_secret=api_secret,
         passphrase=passphrase,
-        signature_type=signature_type,
-        funder=funder,
     )

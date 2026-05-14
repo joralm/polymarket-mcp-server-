@@ -116,8 +116,6 @@ async def load_mcp_config():
             api_key=config.POLYMARKET_API_KEY,
             api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
             passphrase=config.POLYMARKET_PASSPHRASE,
-            signature_type=config.POLYMARKET_SIGNATURE_TYPE,
-            funder=config.POLYMARKET_FUNDER,
         )
 
         # Initialize safety limits
