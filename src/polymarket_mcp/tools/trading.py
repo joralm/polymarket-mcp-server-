@@ -165,15 +165,15 @@ class TradingTools:
                 TradingTools._normalize_outcome_label(token.get("outcome", "")) for token in tokens
             ]
             no_markers = {"no", "false", "0"}
-            yes_candidates = {""}
+            unlabeled_markers = {""}
             if (
                 normalized_outcomes[0] in no_markers
-                and normalized_outcomes[1] in yes_candidates
+                and normalized_outcomes[1] in unlabeled_markers
             ):
                 return tokens[1]["token_id"]
             if (
                 normalized_outcomes[1] in no_markers
-                and normalized_outcomes[0] in yes_candidates
+                and normalized_outcomes[0] in unlabeled_markers
             ):
                 return tokens[0]["token_id"]
         return tokens[0]["token_id"]
