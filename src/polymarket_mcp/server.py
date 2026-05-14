@@ -384,21 +384,19 @@ async def initialize_server() -> None:
             funder=config.POLYMARKET_FUNDER,
         )
 
-        # Create API credentials if not provided (optional - allows read-only mode)
-        if not polymarket_client.has_api_credentials():
-            logger.info("No API credentials found. Attempting to create...")
-            try:
-                await polymarket_client.create_api_credentials()
-                # Prominent credential banner is emitted inside create_api_credentials()
-                logger.info("API credentials created successfully!")
-            except Exception as e:
-                logger.warning("Could not create API credentials: %s", e)
-                logger.info("Continuing in READ-ONLY mode")
-                logger.info("Available: Market Discovery (8 tools) + Market Analysis (10 tools)")
-                logger.info("Unavailable: Trading (12 tools) + Portfolio (8 tools)")
-                logger.info(
-                    "To enable trading, fund your wallet or configure existing API credentials"
-                )
+        # Test (and if necessary refresh or create) API credentials at startup.
+        # This runs on every container start so that invalid/expired keys are
+        # detected and regenerated before any user request arrives.
+        try:
+            await polymarket_client.ensure_valid_api_credentials()
+        except Exception as e:
+            logger.warning("Could not create or validate API credentials: %s", e)
+            logger.info("Continuing in READ-ONLY mode")
+            logger.info("Available: Market Discovery (8 tools) + Market Analysis (10 tools)")
+            logger.info("Unavailable: Trading (12 tools) + Portfolio (8 tools)")
+            logger.info(
+                "To enable trading, fund your wallet or configure existing API credentials"
+            )
 
         # Initialize safety limits
         logger.info("Initializing safety limits...")
