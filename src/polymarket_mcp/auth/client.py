@@ -5,6 +5,7 @@ Handles L1 (private key) and L2 (API key) authentication.
 
 from typing import Dict, Any, List, Optional
 import logging
+import re
 import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import (
@@ -526,33 +527,61 @@ class PolymarketClient:
             raise
 
     @staticmethod
-    def _extract_numeric_balance(balance_data: Dict[str, Any]) -> float:
-        """Extract a numeric balance from known balance/allowance payload shapes."""
-        candidates = [
-            balance_data.get("balance"),
+    def _coerce_numeric(value: Any) -> Optional[float]:
+        """Parse numeric-like values (including currency-formatted strings)."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            # Keep digits, decimal separators and signs. This safely handles
+            # values like "$1.93", "€0.93", and "0.93 USDC".
+            cleaned = re.sub(r"[^0-9.\-+]", "", cleaned)
+            if not cleaned:
+                return None
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+        return None
+
+    @classmethod
+    def _extract_numeric_balance(cls, balance_data: Dict[str, Any]) -> float:
+        """Extract spendable USDC balance from known balance/allowance payload shapes."""
+        # Prefer available/spendable fields over total balance to align with
+        # CLOB `balance-allowance` semantics (usable cash vs. locked funds).
+        available_candidates = [
             balance_data.get("available"),
             balance_data.get("available_balance"),
+        ]
+        total_candidates = [
+            balance_data.get("balance"),
             balance_data.get("amount"),
+            balance_data.get("value"),
         ]
 
         for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
             nested = balance_data.get(nested_key)
             if isinstance(nested, dict):
-                candidates.extend(
+                available_candidates.extend(
                     [
-                        nested.get("balance"),
                         nested.get("available"),
                         nested.get("available_balance"),
+                    ]
+                )
+                total_candidates.extend(
+                    [
+                        nested.get("balance"),
                         nested.get("amount"),
                         nested.get("value"),
                     ]
                 )
 
-        for value in candidates:
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                continue
+        for value in available_candidates + total_candidates:
+            parsed = cls._coerce_numeric(value)
+            if parsed is not None:
+                return parsed
 
         return 0.0
 
@@ -596,7 +625,10 @@ class PolymarketClient:
                 balance_data = get_balance_fn()
 
             if isinstance(balance_data, dict):
-                return balance_data
+                normalized = dict(balance_data)
+                normalized["balance"] = str(self._extract_numeric_balance(normalized))
+                normalized.setdefault("currency", "USDC")
+                return normalized
             return {"balance": str(balance_data)}
 
         # SDK >=0.28 exposes get_balance_allowance() instead.
@@ -606,7 +638,8 @@ class PolymarketClient:
             balance_data = get_balance_allowance_fn(params)
             if isinstance(balance_data, dict):
                 normalized = dict(balance_data)
-                normalized.setdefault("balance", str(self._extract_numeric_balance(normalized)))
+                normalized["balance"] = str(self._extract_numeric_balance(normalized))
+                normalized.setdefault("currency", "USDC")
                 return normalized
             return {"balance": str(balance_data)}
 
