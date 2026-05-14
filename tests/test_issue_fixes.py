@@ -1094,6 +1094,15 @@ class TestYesTokenSelection:
         ]
         assert tt._get_yes_token_id(tokens) == "other_tok"
 
+    def test_get_yes_token_id_does_not_promote_unrecognized_label(self):
+        """Fallback should not assume unknown labels are YES."""
+        tt = self._make_trading_tools()
+        tokens = [
+            {"token_id": "no_tok", "outcome": "No"},
+            {"token_id": "maybe_tok", "outcome": "Maybe"},
+        ]
+        assert tt._get_yes_token_id(tokens) == "no_tok"
+
     def test_full_pipeline_no_first_is_picked_correctly(self):
         """Simulate the CLOB market response where NO is index 0 and YES is index 1."""
         tt = self._make_trading_tools()

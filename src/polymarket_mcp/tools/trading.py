@@ -95,6 +95,12 @@ class TradingTools:
                     "Failed to parse clobTokenIds JSON string; using raw value fallback"
                 )
                 clob_token_ids = [raw_clob_token_ids]
+        if clob_token_ids and raw_outcomes and len(clob_token_ids) > len(raw_outcomes):
+            logger.warning(
+                "clobTokenIds count (%d) exceeds outcomes count (%d); token labels may be partial",
+                len(clob_token_ids),
+                len(raw_outcomes),
+            )
         outcome_by_token_id = {
             str(token_id): str(raw_outcomes[i])
             for i, token_id in enumerate(clob_token_ids)
@@ -159,9 +165,16 @@ class TradingTools:
                 TradingTools._normalize_outcome_label(token.get("outcome", "")) for token in tokens
             ]
             no_markers = {"no", "false", "0"}
-            if normalized_outcomes[0] in no_markers and normalized_outcomes[1] not in no_markers:
+            yes_candidates = {"", "yes", "true", "1"}
+            if (
+                normalized_outcomes[0] in no_markers
+                and normalized_outcomes[1] in yes_candidates
+            ):
                 return tokens[1]["token_id"]
-            if normalized_outcomes[1] in no_markers and normalized_outcomes[0] not in no_markers:
+            if (
+                normalized_outcomes[1] in no_markers
+                and normalized_outcomes[0] in yes_candidates
+            ):
                 return tokens[0]["token_id"]
         return tokens[0]["token_id"]
 
