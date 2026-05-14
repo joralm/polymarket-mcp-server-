@@ -669,13 +669,18 @@ class TestSDKCompatibility:
         client.client = MagicMock()
         client.client.create_and_post_order.side_effect = PolyApiException(resp=mock_resp)
 
-        with pytest.raises(RuntimeError, match="POLYMARKET_SIGNATURE_TYPE=1"):
+        with pytest.raises(RuntimeError) as exc_info:
             await client.post_order(
                 token_id="123",
                 price=0.5,
                 size=1,
                 side="BUY",
             )
+
+        error_message = str(exc_info.value)
+        assert "deposit-wallet flow" in error_message
+        assert "POLYMARKET_SIGNATURE_TYPE=1" in error_message
+        assert "POLYMARKET_FUNDER" in error_message
 
     @pytest.mark.asyncio
     async def test_get_balance_falls_back_to_get_balance_allowance(self):

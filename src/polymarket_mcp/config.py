@@ -7,6 +7,10 @@ from typing import Optional
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+SIGNATURE_TYPE_EOA = 0
+SIGNATURE_TYPE_POLY_PROXY = 1
+SIGNATURE_TYPE_POLY_GNOSIS_SAFE = 2
+
 
 class PolymarketConfig(BaseSettings):
     """
@@ -181,7 +185,11 @@ class PolymarketConfig(BaseSettings):
     @classmethod
     def validate_signature_type(cls, v: int) -> int:
         """Validate signature type is one of the supported values"""
-        valid_types = [0, 1, 2]
+        valid_types = [
+            SIGNATURE_TYPE_EOA,
+            SIGNATURE_TYPE_POLY_PROXY,
+            SIGNATURE_TYPE_POLY_GNOSIS_SAFE,
+        ]
         if v not in valid_types:
             raise ValueError(
                 f"POLYMARKET_SIGNATURE_TYPE must be one of {valid_types} "
@@ -192,7 +200,14 @@ class PolymarketConfig(BaseSettings):
     @model_validator(mode="after")
     def normalize_proxy_funder(self) -> "PolymarketConfig":
         """Default funder to wallet address for proxy/safe signature types."""
-        if self.POLYMARKET_SIGNATURE_TYPE in (1, 2) and not self.POLYMARKET_FUNDER:
+        if (
+            self.POLYMARKET_SIGNATURE_TYPE
+            in (
+                SIGNATURE_TYPE_POLY_PROXY,
+                SIGNATURE_TYPE_POLY_GNOSIS_SAFE,
+            )
+            and not self.POLYMARKET_FUNDER
+        ):
             self.POLYMARKET_FUNDER = self.POLYGON_ADDRESS
         return self
 
