@@ -312,7 +312,12 @@ class PolymarketClient:
                 "GTD": OrderType.GTD,
                 "FAK": OrderType.FAK,
             }
-            order_type_enum = order_type_map.get(order_type.upper(), OrderType.GTC)
+            order_type_upper = order_type.upper()
+            if order_type_upper not in order_type_map:
+                logger.warning(
+                    f"Unknown order_type '{order_type}', defaulting to GTC"
+                )
+            order_type_enum = order_type_map.get(order_type_upper, OrderType.GTC)
 
             # Build order args (order_type is NOT a field on OrderArgs)
             order_args = OrderArgs(
