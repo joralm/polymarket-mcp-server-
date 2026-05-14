@@ -413,6 +413,17 @@ class PolymarketClient:
 
             return order_response
 
+        except PolyApiException as e:
+            error_text = str(e).lower()
+            if e.status_code == 400 and "maker address not allowed" in error_text:
+                raise RuntimeError(
+                    "Polymarket rejected this maker address for trading. Use the Polymarket "
+                    "deposit-wallet flow (MetaMask-linked wallet), configure "
+                    "POLYMARKET_SIGNATURE_TYPE=1, and set POLYMARKET_FUNDER to your "
+                    "POLYGON_ADDRESS."
+                ) from e
+            logger.error(f"Failed to post order: {e}")
+            raise
         except Exception as e:
             logger.error(f"Failed to post order: {e}")
             raise
@@ -658,9 +669,7 @@ class PolymarketClient:
             logger.info("API credentials verified successfully.")
         except PolyApiException as e:
             if e.status_code == 401:
-                logger.warning(
-                    "API credentials rejected (HTTP 401) — refreshing credentials..."
-                )
+                logger.warning("API credentials rejected (HTTP 401) — refreshing credentials...")
                 self._refresh_api_credentials()
                 logger.info("API credentials refreshed successfully.")
             else:

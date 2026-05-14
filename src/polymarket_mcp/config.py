@@ -4,7 +4,7 @@ Loads and validates environment variables with proper defaults.
 """
 
 from typing import Optional
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,14 +45,14 @@ class PolymarketConfig(BaseSettings):
     )
 
     # Wallet signature type — must match how the wallet was registered with Polymarket
-    # 0 = EOA (regular externally-owned account, default for MetaMask/hardware wallets)
-    # 1 = POLY_PROXY (Polymarket proxy wallet created through the web interface)
+    # 0 = EOA (regular externally-owned account)
+    # 1 = POLY_PROXY (Polymarket deposit-wallet flow; recommended default)
     # 2 = POLY_GNOSIS_SAFE (Gnosis Safe multisig)
     POLYMARKET_SIGNATURE_TYPE: int = Field(
-        default=0,
+        default=1,
         description=(
-            "Order signature type: 0=EOA (default), 1=POLY_PROXY (Polymarket web wallet), "
-            "2=POLY_GNOSIS_SAFE. Use 1 if your POLYGON_ADDRESS is a Polymarket proxy wallet."
+            "Order signature type: 0=EOA, 1=POLY_PROXY (recommended default for Polymarket "
+            "deposit-wallet flow), 2=POLY_GNOSIS_SAFE."
         ),
     )
 
@@ -188,6 +188,13 @@ class PolymarketConfig(BaseSettings):
                 "(0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE)"
             )
         return v
+
+    @model_validator(mode="after")
+    def normalize_proxy_funder(self) -> "PolymarketConfig":
+        """Default funder to wallet address for proxy/safe signature types."""
+        if self.POLYMARKET_SIGNATURE_TYPE in (1, 2) and not self.POLYMARKET_FUNDER:
+            self.POLYMARKET_FUNDER = self.POLYGON_ADDRESS
+        return self
 
     @field_validator("MAX_SPREAD_TOLERANCE")
     @classmethod

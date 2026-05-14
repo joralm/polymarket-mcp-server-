@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
 from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
+from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
 from polymarket_mcp.tools.trading import TradingTools
@@ -528,6 +529,51 @@ class TestCriticalRuntimeFixes:
             server_module.websocket_manager = original_websocket_manager
 
 
+class TestDepositWalletFlowConfig:
+    """Regression tests for Polymarket deposit-wallet defaults."""
+
+    def test_signature_type_defaults_to_proxy_and_sets_funder(self):
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+        )
+        assert config.POLYMARKET_SIGNATURE_TYPE == 1
+        assert config.POLYMARKET_FUNDER == config.POLYGON_ADDRESS
+
+    def test_eoa_signature_type_keeps_funder_optional(self):
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+            POLYMARKET_SIGNATURE_TYPE=0,
+            POLYMARKET_FUNDER=None,
+        )
+        assert config.POLYMARKET_SIGNATURE_TYPE == 0
+        assert config.POLYMARKET_FUNDER is None
+
+    @pytest.mark.asyncio
+    async def test_web_dashboard_passes_signature_type_and_funder_to_client(self):
+        import polymarket_mcp.web.app as web_app_module
+
+        fake_config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+        )
+
+        with (
+            patch.object(web_app_module, "load_config", return_value=fake_config),
+            patch.object(web_app_module, "create_polymarket_client") as mock_create,
+            patch.object(
+                web_app_module, "create_safety_limits_from_config", return_value=MagicMock()
+            ),
+        ):
+            await web_app_module.load_mcp_config()
+
+        assert (
+            mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
+        )
+        assert mock_create.call_args.kwargs["funder"] == fake_config.POLYMARKET_FUNDER
+
+
 class TestTradingMarketIdCompatibility:
     """Regression tests for accepting Gamma market IDs in trading tools."""
 
@@ -612,6 +658,26 @@ class TestSDKCompatibility:
         assert balance["balance"] == "42.5"
 
     @pytest.mark.asyncio
+    async def test_post_order_maps_maker_address_error_to_actionable_message(self):
+        client = self._build_client()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        mock_resp.json.return_value = {
+            "error": "maker address not allowed, please use the deposit wallet flow"
+        }
+        client.client = MagicMock()
+        client.client.create_and_post_order.side_effect = PolyApiException(resp=mock_resp)
+
+        with pytest.raises(RuntimeError, match="POLYMARKET_SIGNATURE_TYPE=1"):
+            await client.post_order(
+                token_id="123",
+                price=0.5,
+                size=1,
+                side="BUY",
+            )
+
+    @pytest.mark.asyncio
     async def test_get_balance_falls_back_to_get_balance_allowance(self):
         """Client should support SDKs that only expose get_balance_allowance()."""
         client = self._build_client()
@@ -693,12 +759,12 @@ class TestSDKCompatibility:
                     market="m1",
                     asset_id="a1",
                     bids=[
-                        OrderSummary(price="0.01", size="5"),   # worst bid first
+                        OrderSummary(price="0.01", size="5"),  # worst bid first
                         OrderSummary(price="0.57", size="100"),
                         OrderSummary(price="0.58", size="200"),  # best bid last
                     ],
                     asks=[
-                        OrderSummary(price="0.99", size="5"),   # worst ask first
+                        OrderSummary(price="0.99", size="5"),  # worst ask first
                         OrderSummary(price="0.61", size="100"),
                         OrderSummary(price="0.59", size="200"),  # best ask last
                     ],
@@ -711,9 +777,9 @@ class TestSDKCompatibility:
         asks = orderbook["asks"]
 
         # best bid must be at index 0 (highest bid)
-        assert float(bids[0]["price"]) == 0.58, (
-            f"Expected best bid 0.58 at index 0, got {bids[0]['price']}"
-        )
+        assert (
+            float(bids[0]["price"]) == 0.58
+        ), f"Expected best bid 0.58 at index 0, got {bids[0]['price']}"
         # best ask must be at index 0 (lowest ask)
         assert float(asks[0]["price"]) == 0.59, (
             f"Expected best ask 0.59 at index 0, got {asks[0]['price']} — "
@@ -765,6 +831,7 @@ class TestSDKCompatibility:
 
         class FakeResponse:
             status_code = 401
+
             def json(self):
                 return {"error": "Unauthorized/Invalid api key"}
 
@@ -809,6 +876,7 @@ class TestSDKCompatibility:
 
         class FakeResponse403:
             status_code = 403
+
             def json(self):
                 return {"error": "Forbidden"}
 
@@ -1268,9 +1336,9 @@ class TestYesTokenSelection:
         }
         tokens = tt._extract_market_tokens(market)
         selected = tt._get_yes_token_id(tokens)
-        assert selected == "yes_token_xyz", (
-            "Should select YES token even when NO is listed first in the tokens array"
-        )
+        assert (
+            selected == "yes_token_xyz"
+        ), "Should select YES token even when NO is listed first in the tokens array"
 
 
 # ---------------------------------------------------------------------------
@@ -1313,7 +1381,9 @@ class TestEnsureValidApiCredentials:
         client = self._make_client(with_creds=True)
 
         with (
-            patch.object(client, "_fetch_balance_once", return_value={"balance": "10.0"}) as mock_probe,
+            patch.object(
+                client, "_fetch_balance_once", return_value={"balance": "10.0"}
+            ) as mock_probe,
             patch.object(client, "_refresh_api_credentials") as mock_refresh,
         ):
             await client.ensure_valid_api_credentials()
@@ -1410,9 +1480,7 @@ class TestEnsureValidApiCredentials:
         try:
             with (
                 patch("polymarket_mcp.server.load_config", return_value=mock_config),
-                patch(
-                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
-                ),
+                patch("polymarket_mcp.server.create_polymarket_client", return_value=mock_client),
                 patch("polymarket_mcp.server.create_safety_limits_from_config"),
                 patch("polymarket_mcp.server.get_rate_limiter"),
                 patch("polymarket_mcp.server.TradingTools"),
