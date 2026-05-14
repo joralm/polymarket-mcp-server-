@@ -11,6 +11,8 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
+from py_clob_client.clob_types import AssetType
+from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
@@ -517,6 +519,87 @@ class TestCriticalRuntimeFixes:
         finally:
             server_module.config = original_config
             server_module.polymarket_client = original_polymarket_client
+
+
+class TestSDKCompatibility:
+    """Regression tests for py-clob-client API compatibility changes."""
+
+    @staticmethod
+    def _build_client() -> PolymarketClient:
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                api_key="test-api-key",
+                api_secret="test-api-secret",
+                passphrase="test-api-passphrase",
+            )
+        return client
+
+    @pytest.mark.asyncio
+    async def test_get_balance_uses_legacy_method_when_available(self):
+        """Client should keep supporting SDKs that expose get_balance()."""
+        client = self._build_client()
+
+        class LegacyBalanceClient:
+            def get_balance(self, address):
+                assert address == client.address
+                return {"balance": "42.5"}
+
+        client.client = LegacyBalanceClient()
+        balance = await client.get_balance()
+        assert balance["balance"] == "42.5"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_falls_back_to_get_balance_allowance(self):
+        """Client should support SDKs that only expose get_balance_allowance()."""
+        client = self._build_client()
+
+        class AllowanceOnlyClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"available": "123.45", "allowance": "9999"}
+
+        client.client = AllowanceOnlyClient()
+        balance = await client.get_balance()
+
+        assert balance["available"] == "123.45"
+        assert balance["balance"] == "123.45"
+
+    @pytest.mark.asyncio
+    async def test_get_orderbook_normalizes_orderbooksummary_object(self):
+        """Orderbook response should be normalized to dict shape for downstream tools."""
+        client = self._build_client()
+
+        class BidAsk:
+            def __init__(self, price, size):
+                self.price = price
+                self.size = size
+
+            @property
+            def __dict__(self):
+                return {"price": self.price, "size": self.size}
+
+        class OrderBookSummaryLike:
+            @property
+            def __dict__(self):
+                return {
+                    "market": "m1",
+                    "asset_id": "a1",
+                    "bids": [BidAsk("0.51", "100")],
+                    "asks": [BidAsk("0.52", "80")],
+                }
+
+        class OrderBookClient:
+            def get_order_book(self, token_id):
+                assert token_id == "token-123"
+                return OrderBookSummaryLike()
+
+        client.client = OrderBookClient()
+        orderbook = await client.get_orderbook("token-123")
+
+        assert orderbook["bids"][0]["price"] == "0.51"
+        assert orderbook["asks"][0]["price"] == "0.52"
             server_module.safety_limits = original_safety_limits
             server_module.rate_limiter = original_rate_limiter
             server_module.trading_tools = original_trading_tools
