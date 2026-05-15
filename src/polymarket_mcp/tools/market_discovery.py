@@ -28,7 +28,14 @@ GAMMA_API_URL = "https://gamma-api.polymarket.com"
 
 
 def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
-    """Parse market end-date values into timezone-aware UTC datetimes."""
+    """Parse market end-date to UTC-aware datetime.
+
+    Args:
+        end_date: End-date value from Gamma market payload (ISO string, unix timestamp, or None).
+
+    Returns:
+        UTC-aware datetime when parsing succeeds, otherwise None.
+    """
     if end_date in (None, ""):
         return None
     try:

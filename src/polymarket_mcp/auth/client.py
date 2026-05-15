@@ -751,7 +751,8 @@ class PolymarketClient:
                 logger.warning(
                     "API credentials were accepted, but spendable USDC balance is 0 for funder %s. "
                     "If your Polymarket UI shows funds, set POLYMARKET_FUNDER to your actual "
-                    "deposit/proxy wallet address and keep POLYMARKET_SIGNATURE_TYPE aligned with your wallet type.",
+                    "deposit/proxy wallet address and set POLYMARKET_SIGNATURE_TYPE correctly "
+                    "(MetaMask EOA: 0, Polymarket proxy/deposit wallet: 1, Gnosis Safe: 2, 1271/deposit: 3).",
                     self.funder_address,
                 )
         except PolyApiException as e:
