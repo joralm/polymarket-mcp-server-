@@ -247,7 +247,7 @@ POLYGON_ADDRESS=0xYourPolygonAddress
 **Wallet auth mapping (important for MetaMask / UI balance parity):**
 - `POLYGON_ADDRESS` = signer EOA / private key owner.
 - `POLYMARKET_FUNDER` = Polymarket deposit/proxy wallet that actually holds balance and positions in the UI.
-- `POLYMARKET_SIGNATURE_TYPE` = wallet auth mode (`1` legacy proxy, `3` deposit wallet / `POLY_1271` per current Polymarket docs for new API users).
+- `POLYMARKET_SIGNATURE_TYPE` = must be `3` (deposit wallet / `POLY_1271`, MetaMask flow).
 
 **Recommended Safety Limits:**
 ```env

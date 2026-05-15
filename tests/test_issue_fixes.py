@@ -548,6 +548,14 @@ class TestCriticalRuntimeFixes:
 class TestWalletConfigFlow:
     """Regression tests for MetaMask wallet configuration flow."""
 
+    def test_config_rejects_non_deposit_signature_flow(self):
+        with pytest.raises(ValueError, match="must be 3"):
+            PolymarketConfig(
+                POLYGON_PRIVATE_KEY="0" * 64,
+                POLYGON_ADDRESS="0x" + "1" * 40,
+                POLYMARKET_SIGNATURE_TYPE=1,
+            )
+
     @pytest.mark.asyncio
     async def test_web_dashboard_initializes_client_with_wallet_and_api_credentials(self):
         import polymarket_mcp.web.app as web_app_module

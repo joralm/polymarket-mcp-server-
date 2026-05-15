@@ -152,12 +152,9 @@ Use this exact checklist:
   ```
 
 #### 4) `POLYMARKET_SIGNATURE_TYPE` (auth mode)
-- Use:
-  - `3` for current MetaMask + deposit-wallet (`POLY_1271`) setups.
-  - `1` for legacy proxy setups.
-  - `0` for direct EOA flows.
-  - `2` for Gnosis Safe.
-- This project now defaults Docker to `3`.
+- This server supports **only**:
+  - `3` for MetaMask + deposit-wallet (`POLY_1271`) setups.
+- Any other value is intentionally unsupported to avoid auth ambiguity.
 - Example:
   ```env
   POLYMARKET_SIGNATURE_TYPE=3

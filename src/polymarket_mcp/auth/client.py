@@ -106,7 +106,13 @@ class PolymarketClient:
         self.address = address.lower()
         self.funder_address = (funder or address).lower()
         self.chain_id = chain_id
-        self.signature_type = signature_type
+        if signature_type != 3:
+            logger.warning(
+                "signature_type=%s requested, but this server enforces MetaMask deposit-wallet flow "
+                "(signature_type=3). Overriding to 3.",
+                signature_type,
+            )
+        self.signature_type = 3
         self.host = host
 
         # Initialize order signer
@@ -758,8 +764,8 @@ class PolymarketClient:
                 logger.warning(
                     "API credentials were accepted, but spendable USDC balance is 0 for funder %s. "
                     "If your Polymarket UI shows funds, set POLYMARKET_FUNDER to your actual "
-                    "deposit/proxy wallet address and set POLYMARKET_SIGNATURE_TYPE correctly "
-                    "(MetaMask EOA: 0, Polymarket proxy/deposit wallet: 1, Gnosis Safe: 2, 1271/deposit: 3).",
+                    "deposit wallet address and keep POLYMARKET_SIGNATURE_TYPE=3 "
+                    "(MetaMask deposit-wallet flow).",
                     self.funder_address,
                 )
         except PolyApiException as e:
