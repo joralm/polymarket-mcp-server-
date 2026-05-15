@@ -26,24 +26,34 @@ def pytest_configure(config):
     )
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def test_env_vars():
     """Set up test environment variables."""
     original_env = {}
 
     # Store original values
-    for key in ["POLYGON_PRIVATE_KEY", "POLYGON_ADDRESS", "POLYMARKET_CHAIN_ID"]:
+    for key in [
+        "POLYGON_PRIVATE_KEY",
+        "POLYGON_ADDRESS",
+        "POLYMARKET_ENV",
+        "POLYMARKET_CHAIN_ID",
+        "CLOB_API_URL",
+        "GAMMA_API_URL",
+    ]:
         original_env[key] = os.environ.get(key)
 
     # Set test values if not already set
-    if not os.environ.get("POLYGON_PRIVATE_KEY"):
-        os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
-
-    if not os.environ.get("POLYGON_ADDRESS"):
-        os.environ["POLYGON_ADDRESS"] = "0x" + "0" * 40
+    if not os.environ.get("POLYMARKET_ENV"):
+        os.environ["POLYMARKET_ENV"] = "mainnet"
 
     if not os.environ.get("POLYMARKET_CHAIN_ID"):
         os.environ["POLYMARKET_CHAIN_ID"] = "137"
+
+    if not os.environ.get("CLOB_API_URL"):
+        os.environ["CLOB_API_URL"] = "https://clob.polymarket.com"
+
+    if not os.environ.get("GAMMA_API_URL"):
+        os.environ["GAMMA_API_URL"] = "https://gamma-api.polymarket.com"
 
     yield
 

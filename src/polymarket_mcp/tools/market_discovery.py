@@ -24,29 +24,13 @@ from ..utils.rate_limiter import EndpointCategory, get_rate_limiter
 logger = logging.getLogger(__name__)
 
 # Gamma API base URL
-GAMMA_API_URL = "https://gamma-api.polymarket.com"
-_KNOWN_DNS_FALLBACKS = {
-    "https://gcomm-api.polytest.cloud": "https://gamma-api.polymarket.com",
-}
-_DNS_ERROR_HINTS = (
-    "name or service not known",
-    "temporary failure in name resolution",
-    "nodename nor servname provided",
-    "getaddrinfo failed",
-)
+GAMMA_API_URL: Optional[str] = None
 
 
-def set_gamma_api_url(url: str) -> None:
+def set_gamma_api_url(url: Optional[str]) -> None:
     """Update Gamma API URL at runtime from loaded configuration."""
     global GAMMA_API_URL
-    if url:
-        GAMMA_API_URL = url.rstrip("/")
-
-
-def _is_dns_resolution_error(error: Exception) -> bool:
-    """Return True when request failure appears to be DNS resolution related."""
-    message = str(error).lower()
-    return any(hint in message for hint in _DNS_ERROR_HINTS)
+    GAMMA_API_URL = url.rstrip("/") if url and url.strip() else None
 
 
 def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
@@ -90,6 +74,14 @@ async def _fetch_gamma_markets(
     Returns:
         List of market dictionaries
     """
+    if not GAMMA_API_URL:
+        message = (
+            "Gamma API URL is not configured; set POLYMARKET_ENV and the required environment "
+            "variables for the selected network"
+        )
+        logger.warning(message)
+        raise RuntimeError(message)
+
     rate_limiter = get_rate_limiter()
 
     await rate_limiter.acquire(EndpointCategory.GAMMA_API)
@@ -97,7 +89,6 @@ async def _fetch_gamma_markets(
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             base_url = GAMMA_API_URL.rstrip("/")
-            fallback_base_url = _KNOWN_DNS_FALLBACKS.get(base_url)
 
             # Set default params
             if params is None:
@@ -114,18 +105,7 @@ async def _fetch_gamma_markets(
                 response.raise_for_status()
                 return response.json()
 
-            try:
-                data = await _request(base_url)
-            except httpx.ConnectError as connect_error:
-                if fallback_base_url and _is_dns_resolution_error(connect_error):
-                    logger.warning(
-                        "DNS resolution failed for Gamma host %s; retrying with fallback %s",
-                        base_url,
-                        fallback_base_url,
-                    )
-                    data = await _request(fallback_base_url)
-                else:
-                    raise
+            data = await _request(base_url)
 
             # Handle different response formats
             if isinstance(data, list):

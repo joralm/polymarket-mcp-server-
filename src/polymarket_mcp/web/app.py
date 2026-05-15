@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 import uvicorn
 from pydantic import BaseModel
 
-from ..config import load_config, PolymarketConfig
+from ..config import load_config, PolymarketConfig, get_polymarket_runtime_state
 from ..auth import create_polymarket_client, PolymarketClient
 from ..utils import get_rate_limiter, create_safety_limits_from_config, SafetyLimits
 from ..tools import market_discovery, market_analysis
@@ -118,12 +118,19 @@ async def load_mcp_config():
         logger.info("Loading MCP configuration...")
         config = load_config()
         demo_mode = getattr(config, "DEMO_MODE", False) is True
+        polymarket_ready, polymarket_config_error = get_polymarket_runtime_state(config)
         logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
         logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        if demo_mode:
+        if not polymarket_ready:
+            logger.warning(
+                "%s; dashboard will run without Polymarket connectivity",
+                polymarket_config_error or "Polymarket environment is not fully configured",
+            )
+            client = None
+        elif demo_mode:
             logger.info("DEMO_MODE=true: dashboard running without wallet/auth client initialization")
             client = None
         else:
@@ -147,7 +154,9 @@ async def load_mcp_config():
         # Initialize safety limits
         safety_limits = create_safety_limits_from_config(config)
 
-        if demo_mode:
+        if not polymarket_ready:
+            logger.info("Configuration loaded without Polymarket connectivity")
+        elif demo_mode:
             logger.info("Configuration loaded (DEMO_MODE=true, wallet not required)")
         else:
             logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")

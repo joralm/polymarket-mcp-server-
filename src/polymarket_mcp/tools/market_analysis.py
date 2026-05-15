@@ -27,59 +27,24 @@ from ..utils.rate_limiter import EndpointCategory, get_rate_limiter
 logger = logging.getLogger(__name__)
 
 # API URLs
-GAMMA_API_URL = "https://gamma-api.polymarket.com"
-CLOB_API_URL = "https://clob.polymarket.com"
-_KNOWN_DNS_FALLBACKS = {
-    "https://gcomm-api.polytest.cloud": "https://gamma-api.polymarket.com",
-    "https://clob-testnet.polytest.cloud": "https://clob.polymarket.com",
-}
-_DNS_ERROR_HINTS = (
-    "name or service not known",
-    "temporary failure in name resolution",
-    "nodename nor servname provided",
-    "getaddrinfo failed",
-)
+GAMMA_API_URL: Optional[str] = None
+CLOB_API_URL: Optional[str] = None
 
 
-def set_api_urls(gamma_api_url: str, clob_api_url: str) -> None:
+def set_api_urls(gamma_api_url: Optional[str], clob_api_url: Optional[str]) -> None:
     """Update Gamma/CLOB API URLs at runtime from loaded configuration."""
     global GAMMA_API_URL, CLOB_API_URL
-    if gamma_api_url:
-        GAMMA_API_URL = gamma_api_url.rstrip("/")
-    if clob_api_url:
-        CLOB_API_URL = clob_api_url.rstrip("/")
+    GAMMA_API_URL = gamma_api_url.rstrip("/") if gamma_api_url and gamma_api_url.strip() else None
+    CLOB_API_URL = clob_api_url.rstrip("/") if clob_api_url and clob_api_url.strip() else None
 
 
-def _is_dns_resolution_error(error: Exception) -> bool:
-    """Return True when request failure appears to be DNS resolution related."""
-    message = str(error).lower()
-    return any(hint in message for hint in _DNS_ERROR_HINTS)
-
-
-async def _get_json_with_dns_fallback(
-    client: httpx.AsyncClient, base_url: str, endpoint: str, params: Optional[Dict] = None
-) -> Any:
-    """GET JSON and retry once on known DNS failures using mapped fallback host."""
+async def _get_json(client: httpx.AsyncClient, base_url: str, endpoint: str, params: Optional[Dict] = None) -> Any:
+    """GET JSON from the configured host only."""
     normalized_base_url = base_url.rstrip("/")
-    fallback_base_url = _KNOWN_DNS_FALLBACKS.get(normalized_base_url)
-
-    async def _request(api_base_url: str) -> Any:
-        url = f"{api_base_url}{endpoint}"
-        response = await client.get(url, params=params or {})
-        response.raise_for_status()
-        return response.json()
-
-    try:
-        return await _request(normalized_base_url)
-    except httpx.ConnectError as connect_error:
-        if fallback_base_url and _is_dns_resolution_error(connect_error):
-            logger.warning(
-                "DNS resolution failed for %s; retrying with fallback host %s",
-                normalized_base_url,
-                fallback_base_url,
-            )
-            return await _request(fallback_base_url)
-        raise
+    url = f"{normalized_base_url}{endpoint}"
+    response = await client.get(url, params=params or {})
+    response.raise_for_status()
+    return response.json()
 
 
 # Data Models
@@ -141,13 +106,21 @@ class MarketOpportunity(BaseModel):
 
 async def _fetch_gamma_api(endpoint: str, params: Optional[Dict] = None) -> Any:
     """Fetch from Gamma API with rate limiting"""
+    if not GAMMA_API_URL:
+        message = (
+            "Gamma API URL is not configured; set POLYMARKET_ENV and the required environment "
+            "variables for the selected network"
+        )
+        logger.warning(message)
+        raise RuntimeError(message)
+
     rate_limiter = get_rate_limiter()
 
     await rate_limiter.acquire(EndpointCategory.GAMMA_API)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            return await _get_json_with_dns_fallback(client, GAMMA_API_URL, endpoint, params)
+            return await _get_json(client, GAMMA_API_URL, endpoint, params)
     except Exception as e:
         logger.error(f"Gamma API error for {endpoint}: {e}")
         raise
@@ -155,13 +128,21 @@ async def _fetch_gamma_api(endpoint: str, params: Optional[Dict] = None) -> Any:
 
 async def _fetch_clob_api(endpoint: str, params: Optional[Dict] = None) -> Any:
     """Fetch from CLOB API with rate limiting"""
+    if not CLOB_API_URL:
+        message = (
+            "CLOB API URL is not configured; set POLYMARKET_ENV and the required environment "
+            "variables for the selected network"
+        )
+        logger.warning(message)
+        raise RuntimeError(message)
+
     rate_limiter = get_rate_limiter()
 
     await rate_limiter.acquire(EndpointCategory.MARKET_DATA)
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            return await _get_json_with_dns_fallback(client, CLOB_API_URL, endpoint, params)
+            return await _get_json(client, CLOB_API_URL, endpoint, params)
     except Exception as e:
         logger.error(f"CLOB API error for {endpoint}: {e}")
         raise

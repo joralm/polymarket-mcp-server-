@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route, Router
 import uvicorn
 
-from .config import load_config, PolymarketConfig
+from .config import load_config, PolymarketConfig, get_polymarket_runtime_state
 from .auth import PolymarketClient, create_polymarket_client
 from .utils import (
     get_rate_limiter,
@@ -537,9 +537,20 @@ async def initialize_server() -> None:
             logging.getLogger(_noisy).setLevel(logging.WARNING)
 
         demo_mode = getattr(config, "DEMO_MODE", False) is True
+        polymarket_ready, polymarket_config_error = get_polymarket_runtime_state(config)
 
-        if demo_mode:
+        market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
+        market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
+
+        if not polymarket_ready:
+            logger.warning(
+                "%s; skipping Polymarket initialization",
+                polymarket_config_error or "Polymarket environment is not fully configured",
+            )
+            polymarket_client = None
+        elif demo_mode:
             logger.info("Configuration loaded (DEMO_MODE=true, walletless read-only mode)")
+            polymarket_client = None
         else:
             logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
             logger.debug(
@@ -552,10 +563,10 @@ async def initialize_server() -> None:
                 config.effective_funder,
                 config.POLYMARKET_SIGNATURE_TYPE,
             )
-        market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
-        market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        if demo_mode:
+        if not polymarket_ready:
+            logger.info("Continuing without Polymarket client, trading tools, or websocket manager")
+        elif demo_mode:
             logger.info("DEMO_MODE=true: skipping Polymarket auth/trading client initialization")
             polymarket_client = None
         else:
@@ -616,7 +627,9 @@ async def initialize_server() -> None:
             logger.info("Trading tools NOT initialized (no API credentials - read-only mode)")
 
         websocket_manager = None
-        if config.WS_ENABLED:
+        if not polymarket_ready:
+            logger.info("WebSocket manager skipped because Polymarket environment is not configured")
+        elif config.WS_ENABLED:
             # Initialize WebSocket manager
             logger.info("Initializing WebSocket manager...")
             websocket_manager = WebSocketManager(config)
@@ -635,7 +648,10 @@ async def initialize_server() -> None:
             logger.info("WebSocket manager disabled (WS_ENABLED=false)")
 
         logger.info("Server initialization complete!")
-        logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
+        if polymarket_ready:
+            logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
+        else:
+            logger.info("Polymarket network access is disabled until required environment variables are set")
 
         # Report available tools based on authentication
         static_tool_count = DISCOVERY_TOOL_COUNT + ANALYSIS_TOOL_COUNT + STATUS_TOOL_COUNT
@@ -659,7 +675,11 @@ async def initialize_server() -> None:
         else:
             logger.info(
                 "Mode: READ-ONLY (%s)",
-                "demo mode" if demo_mode else "no API credentials",
+                (
+                    "missing environment configuration"
+                    if not polymarket_ready
+                    else ("demo mode" if demo_mode else "no API credentials")
+                ),
             )
             logger.info(
                 "Available tools: %s total (%s Discovery, %s Analysis, %s Server Status, %s Real-time)",
@@ -669,7 +689,9 @@ async def initialize_server() -> None:
                 STATUS_TOOL_COUNT,
                 realtime_count,
             )
-            if demo_mode:
+            if not polymarket_ready:
+                logger.info("Market, trading, portfolio, and realtime connectivity remain inactive")
+            elif demo_mode:
                 logger.info("Trading and Portfolio tools are disabled in DEMO_MODE")
             else:
                 logger.info("Trading and Portfolio tools require API credentials")
