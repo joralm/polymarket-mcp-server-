@@ -212,6 +212,17 @@ class TestMarketFiltering:
             assert "Old featured" not in questions, "Expired featured market should be filtered out"
             assert "Active featured" in questions
 
+    def test_parse_market_end_datetime_supports_iso_and_timestamp(self):
+        """End-date parser should normalize both ISO-Z strings and unix timestamps to UTC."""
+        from polymarket_mcp.tools.market_discovery import _parse_market_end_datetime
+
+        iso_dt = _parse_market_end_datetime("2026-07-31T12:00:00Z")
+        ts_dt = _parse_market_end_datetime(1785499200)  # 2026-07-31T12:00:00+00:00
+
+        assert iso_dt is not None and iso_dt.tzinfo is not None
+        assert ts_dt is not None and ts_dt.tzinfo is not None
+        assert iso_dt == ts_dt
+
     @pytest.mark.asyncio
     async def test_filter_by_category_sends_closed_false(self):
         """filter_markets_by_category must include closed=false."""

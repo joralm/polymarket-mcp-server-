@@ -35,6 +35,7 @@ def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
 
     Returns:
         UTC-aware datetime when parsing succeeds, otherwise None.
+        Naive datetime inputs are interpreted as UTC.
     """
     if end_date in (None, ""):
         return None
@@ -43,7 +44,8 @@ def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
             parsed = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
         else:
             parsed = datetime.fromtimestamp(int(end_date), tz=timezone.utc)
-    except Exception:
+    except Exception as parse_error:
+        logger.debug("Failed parsing market end_date=%r: %s", end_date, parse_error)
         return None
 
     if parsed.tzinfo is None:
