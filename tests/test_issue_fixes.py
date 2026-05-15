@@ -971,6 +971,77 @@ class TestSDKCompatibility:
         assert call_count == 1, "Should not retry on non-401 errors"
 
 
+class TestClobClientSignatureType:
+    """Regression: ClobClient must be initialized with POLY_PROXY signature type.
+
+    Without signature_type=1 the SDK defaults to EOA (type 0) and all
+    balance-allowance queries go to the raw EOA wallet, which returns 0 even
+    though the user's USDC lives in their Polymarket Proxy wallet (type 1).
+    """
+
+    def test_initialize_client_uses_poly_proxy_signature_type(self):
+        """ClobClient must be created with signature_type=1 (POLY_PROXY)."""
+        captured_args = {}
+
+        def fake_clob_init(self_inner, **kwargs):
+            captured_args.update(kwargs)
+            # Prevent real network activity by leaving attributes unset;
+            # the test only cares about what was passed.
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = None
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+
+        from py_clob_client_v2.client import ClobClient
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+            )
+
+        assert captured_args.get("signature_type") == 1, (
+            "ClobClient must use signature_type=1 (POLY_PROXY) so that "
+            "balance-allowance queries return the Proxy-wallet balance, not 0"
+        )
+        assert captured_args.get("funder") == "0x" + "a" * 40, (
+            "funder must be set to the user's address for POLY_PROXY wallets"
+        )
+
+    def test_get_balance_returns_nonzero_with_poly_proxy_type(self):
+        """balance-allowance response is forwarded correctly when signature type is correct."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                api_key="key",
+                api_secret="secret",
+                passphrase="passphrase",
+            )
+
+        class FakeClob:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"balance": "42.00", "allowance": "999999999"}
+
+        client.client = FakeClob()
+        import asyncio
+        balance = asyncio.get_event_loop().run_until_complete(client.get_balance())
+        assert balance["balance"] == "42.0", (
+            "Expected '42.0' USDC but got '%s'; "
+            "POLY_PROXY balance-allowance response not being parsed correctly" % balance["balance"]
+        )
+
+
 class TestPortfolioBalanceHandling:
     """Regression tests for portfolio cash-balance extraction from CLOB payloads."""
 

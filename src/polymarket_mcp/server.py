@@ -375,6 +375,8 @@ async def initialize_server() -> None:
             logging.getLogger(_noisy).setLevel(logging.WARNING)
 
         logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
+        if config.POLYMARKET_API_KEY:
+            logger.debug(f"POLYMARKET_API_KEY={config.POLYMARKET_API_KEY[:8]}…")
 
         # Initialize Polymarket client
         logger.info("Initializing Polymarket client...")

@@ -131,11 +131,18 @@ class PolymarketClient:
     def _initialize_client(self) -> None:
         """Initialize the ClobClient with appropriate authentication"""
         try:
-            # Build client arguments
+            # Build client arguments.
+            # signature_type=1 (POLY_PROXY) matches Polymarket's MetaMask wallet
+            # flow where USDC is held in a Proxy wallet tied to the user's EOA.
+            # Without this, the SDK defaults to EOA (type 0) and every
+            # balance/allowance query returns 0 because the funds live in the
+            # Proxy wallet, not in the raw EOA account.
             client_args = {
                 "host": self.host,
                 "chain_id": self.chain_id,
                 "key": self.private_key,
+                "signature_type": 1,  # POLY_PROXY
+                "funder": self.address,  # proxy-wallet address == user address
             }
 
             # Add L2 credentials if available
