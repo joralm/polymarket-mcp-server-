@@ -240,7 +240,7 @@ class PolymarketConfig(BaseSettings):
 
     @field_validator("POLYMARKET_CHAIN_ID", "POLYMARKET_TEST_CHAIN_ID", mode="before")
     @classmethod
-    def normalize_optional_chain_id(cls, v: object):
+    def normalize_optional_chain_id(cls, v: object) -> Optional[int]:
         """Treat empty chain IDs as missing."""
         if v in (None, ""):
             return None

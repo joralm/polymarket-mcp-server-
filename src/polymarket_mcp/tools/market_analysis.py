@@ -34,8 +34,8 @@ CLOB_API_URL: Optional[str] = None
 def set_api_urls(gamma_api_url: Optional[str], clob_api_url: Optional[str]) -> None:
     """Update Gamma/CLOB API URLs at runtime from loaded configuration."""
     global GAMMA_API_URL, CLOB_API_URL
-    GAMMA_API_URL = gamma_api_url.rstrip("/") if gamma_api_url else None
-    CLOB_API_URL = clob_api_url.rstrip("/") if clob_api_url else None
+    GAMMA_API_URL = gamma_api_url.rstrip("/") if gamma_api_url and gamma_api_url.strip() else None
+    CLOB_API_URL = clob_api_url.rstrip("/") if clob_api_url and clob_api_url.strip() else None
 
 
 async def _get_json(client: httpx.AsyncClient, base_url: str, endpoint: str, params: Optional[Dict] = None) -> Any:

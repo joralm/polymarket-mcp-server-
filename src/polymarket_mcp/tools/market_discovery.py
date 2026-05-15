@@ -30,7 +30,7 @@ GAMMA_API_URL: Optional[str] = None
 def set_gamma_api_url(url: Optional[str]) -> None:
     """Update Gamma API URL at runtime from loaded configuration."""
     global GAMMA_API_URL
-    GAMMA_API_URL = url.rstrip("/") if url else None
+    GAMMA_API_URL = url.rstrip("/") if url and url.strip() else None
 
 
 def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
