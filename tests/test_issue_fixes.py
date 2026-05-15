@@ -9,7 +9,7 @@ Tests for GitHub issue fixes (#2, #6, #10).
 import pytest
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
@@ -1467,7 +1467,7 @@ class TestMarketAnalysisIdentifierCompatibility:
             mock_fetch.return_value = [
                 {
                     "question": "soon market",
-                    "end_date_iso": (datetime.utcnow() + timedelta(hours=2)).isoformat() + "Z",
+                    "end_date_iso": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
                 }
             ]
             results = await market_discovery.get_closing_soon_markets(hours=24, limit=5)
