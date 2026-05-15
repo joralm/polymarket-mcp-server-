@@ -1,11 +1,14 @@
 """
 Configuration management for Polymarket MCP server.
-Loads and validates environment variables with proper defaults.
+Loads and validates environment variables.
 """
 
-from typing import Optional, ClassVar
-from pydantic import Field, field_validator, model_validator
+import logging
+from typing import Optional
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 class PolymarketConfig(BaseSettings):
     """
@@ -17,12 +20,8 @@ class PolymarketConfig(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
     )
 
-    MAINNET_CHAIN_ID: ClassVar[int] = 137
-    TESTNET_CHAIN_ID: ClassVar[int] = 80002
-    MAINNET_CLOB_URL: ClassVar[str] = "https://clob.polymarket.com"
-    TESTNET_CLOB_URL: ClassVar[str] = "https://clob-testnet.polytest.cloud"
-    MAINNET_GAMMA_URL: ClassVar[str] = "https://gamma-api.polymarket.com"
-    TESTNET_GAMMA_URL: ClassVar[str] = "https://gcomm-api.polytest.cloud"
+    _polymarket_ready: bool = PrivateAttr(default=False)
+    _polymarket_config_error: Optional[str] = PrivateAttr(default=None)
 
     # DEMO MODE - Run without real credentials (read-only)
     DEMO_MODE: bool = Field(
@@ -34,12 +33,15 @@ class PolymarketConfig(BaseSettings):
         default="", description="Polygon wallet private key (without 0x prefix)"
     )
     POLYGON_ADDRESS: str = Field(default="", description="Polygon wallet address")
-    POLYMARKET_CHAIN_ID: int = Field(
-        default=137, description="Polygon chain ID (137 for mainnet, 80002 for Amoy testnet)"
+    POLYMARKET_CHAIN_ID: Optional[int] = Field(
+        default=None, description="Polygon chain ID for mainnet/prod"
     )
-    POLYMARKET_ENV: str = Field(
-        default="mainnet",
-        description="Polymarket environment selection: mainnet or testnet",
+    POLYMARKET_TEST_CHAIN_ID: Optional[int] = Field(
+        default=None, description="Polygon chain ID for testnet"
+    )
+    POLYMARKET_ENV: Optional[str] = Field(
+        default=None,
+        description="Polymarket environment selection: mainnet/prod or testnet",
     )
 
     # Optional L2 API Credentials (auto-created if not provided)
@@ -95,11 +97,17 @@ class PolymarketConfig(BaseSettings):
     )
 
     # API Endpoints
-    CLOB_API_URL: str = Field(
-        default="https://clob.polymarket.com", description="Polymarket CLOB API endpoint"
+    CLOB_API_URL: Optional[str] = Field(
+        default=None, description="Polymarket CLOB API endpoint for mainnet/prod"
     )
-    GAMMA_API_URL: str = Field(
-        default="https://gamma-api.polymarket.com", description="Gamma API endpoint for market data"
+    GAMMA_API_URL: Optional[str] = Field(
+        default=None, description="Gamma API endpoint for market data on mainnet/prod"
+    )
+    CLOB_API_TEST_URL: Optional[str] = Field(
+        default=None, description="Polymarket CLOB API endpoint for testnet"
+    )
+    GAMMA_API_TEST_URL: Optional[str] = Field(
+        default=None, description="Gamma API endpoint for market data on testnet"
     )
 
     # WebSocket Controls
@@ -208,14 +216,52 @@ class PolymarketConfig(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {valid_levels}")
         return v
 
+    @field_validator("POLYMARKET_ENV", mode="before")
+    @classmethod
+    def normalize_polymarket_env(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize empty POLYMARKET_ENV values."""
+        if v is None:
+            return None
+        normalized = str(v).strip()
+        return normalized or None
+
     @field_validator("POLYMARKET_ENV")
     @classmethod
-    def validate_polymarket_env(cls, v: str) -> str:
+    def validate_polymarket_env(cls, v: Optional[str]) -> Optional[str]:
         """Validate Polymarket environment selection."""
+        if v is None:
+            return None
         normalized = v.strip().lower()
+        if normalized == "prod":
+            return "mainnet"
         if normalized not in {"mainnet", "testnet"}:
-            raise ValueError("POLYMARKET_ENV must be either 'mainnet' or 'testnet'")
+            raise ValueError("POLYMARKET_ENV must be one of 'mainnet', 'prod', or 'testnet'")
         return normalized
+
+    @field_validator("POLYMARKET_CHAIN_ID", "POLYMARKET_TEST_CHAIN_ID", mode="before")
+    @classmethod
+    def normalize_optional_chain_id(cls, v):
+        """Treat empty chain IDs as missing."""
+        if v in (None, ""):
+            return None
+        return v
+
+    @field_validator(
+        "CLOB_API_URL",
+        "GAMMA_API_URL",
+        "CLOB_API_TEST_URL",
+        "GAMMA_API_TEST_URL",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_url(cls, v: Optional[str]) -> Optional[str]:
+        """Treat empty URLs as missing and normalize trailing slashes."""
+        if v is None:
+            return None
+        normalized = str(v).strip()
+        if not normalized:
+            return None
+        return normalized.rstrip("/")
 
     @field_validator("POLYMARKET_SIGNATURE_TYPE")
     @classmethod
@@ -241,27 +287,63 @@ class PolymarketConfig(BaseSettings):
         return v.lower()
 
     @model_validator(mode="after")
-    def apply_environment_defaults(self):
-        """
-        Apply endpoint/chain defaults from POLYMARKET_ENV when not explicitly set.
+    def resolve_polymarket_environment(self):
+        """Resolve active Polymarket runtime settings from the selected environment."""
+        self._polymarket_ready = False
+        self._polymarket_config_error = None
 
-        Explicit values from environment variables always win over inferred defaults.
-        """
-        fields_set = self.model_fields_set
+        if not self.POLYMARKET_ENV:
+            self.POLYMARKET_CHAIN_ID = None
+            self.CLOB_API_URL = None
+            self.GAMMA_API_URL = None
+            self._polymarket_config_error = "POLYMARKET_ENV is not set"
+            return self
+
         if self.POLYMARKET_ENV == "testnet":
-            if "POLYMARKET_CHAIN_ID" not in fields_set:
-                self.POLYMARKET_CHAIN_ID = self.TESTNET_CHAIN_ID
-            if "CLOB_API_URL" not in fields_set:
-                self.CLOB_API_URL = self.TESTNET_CLOB_URL
-            if "GAMMA_API_URL" not in fields_set:
-                self.GAMMA_API_URL = self.TESTNET_GAMMA_URL
-        else:
-            if "POLYMARKET_CHAIN_ID" not in fields_set:
-                self.POLYMARKET_CHAIN_ID = self.MAINNET_CHAIN_ID
-            if "CLOB_API_URL" not in fields_set:
-                self.CLOB_API_URL = self.MAINNET_CLOB_URL
-            if "GAMMA_API_URL" not in fields_set:
-                self.GAMMA_API_URL = self.MAINNET_GAMMA_URL
+            missing = [
+                name
+                for name, value in (
+                    ("POLYMARKET_TEST_CHAIN_ID", self.POLYMARKET_TEST_CHAIN_ID),
+                    ("CLOB_API_TEST_URL", self.CLOB_API_TEST_URL),
+                    ("GAMMA_API_TEST_URL", self.GAMMA_API_TEST_URL),
+                )
+                if value in (None, "")
+            ]
+            if missing:
+                self.POLYMARKET_CHAIN_ID = None
+                self.CLOB_API_URL = None
+                self.GAMMA_API_URL = None
+                self._polymarket_config_error = (
+                    "POLYMARKET_ENV=testnet but missing required variables: "
+                    + ", ".join(missing)
+                )
+                return self
+
+            self.POLYMARKET_CHAIN_ID = self.POLYMARKET_TEST_CHAIN_ID
+            self.CLOB_API_URL = self.CLOB_API_TEST_URL
+            self.GAMMA_API_URL = self.GAMMA_API_TEST_URL
+            self._polymarket_ready = True
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ("POLYMARKET_CHAIN_ID", self.POLYMARKET_CHAIN_ID),
+                ("CLOB_API_URL", self.CLOB_API_URL),
+                ("GAMMA_API_URL", self.GAMMA_API_URL),
+            )
+            if value in (None, "")
+        ]
+        if missing:
+            self.POLYMARKET_CHAIN_ID = None
+            self.CLOB_API_URL = None
+            self.GAMMA_API_URL = None
+            self._polymarket_config_error = (
+                "POLYMARKET_ENV=mainnet but missing required variables: " + ", ".join(missing)
+            )
+            return self
+
+        self._polymarket_ready = True
         return self
 
     def has_api_credentials(self) -> bool:
@@ -288,6 +370,16 @@ class PolymarketConfig(BaseSettings):
     def effective_funder(self) -> str:
         """Wallet address that actually funds positions/orders in Polymarket."""
         return (self.POLYMARKET_FUNDER or self.POLYGON_ADDRESS).lower()
+
+    @property
+    def polymarket_ready(self) -> bool:
+        """Return True when the selected Polymarket environment is fully configured."""
+        return self._polymarket_ready
+
+    @property
+    def polymarket_config_error(self) -> Optional[str]:
+        """Reason why Polymarket runtime settings were not activated."""
+        return self._polymarket_config_error
 
 
 def load_config() -> PolymarketConfig:

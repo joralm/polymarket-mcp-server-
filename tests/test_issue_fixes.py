@@ -611,13 +611,16 @@ class TestWalletConfigFlow:
             POLYGON_PRIVATE_KEY="0" * 64,
             POLYGON_ADDRESS="0x" + "1" * 40,
             POLYMARKET_ENV="testnet",
+            POLYMARKET_TEST_CHAIN_ID=80002,
+            CLOB_API_TEST_URL="https://clob-testnet.polytest.cloud",
+            GAMMA_API_TEST_URL="https://gcomm-api.polytest.cloud",
         )
 
         assert cfg.POLYMARKET_CHAIN_ID == 80002
         assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
         assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
 
-    def test_config_keeps_explicit_overrides_in_testnet(self):
+    def test_config_requires_testnet_specific_variables(self):
         cfg = PolymarketConfig(
             POLYGON_PRIVATE_KEY="0" * 64,
             POLYGON_ADDRESS="0x" + "1" * 40,
@@ -627,9 +630,11 @@ class TestWalletConfigFlow:
             GAMMA_API_URL="https://custom-gamma.example",
         )
 
-        assert cfg.POLYMARKET_CHAIN_ID == 137
-        assert cfg.CLOB_API_URL == "https://custom-clob.example"
-        assert cfg.GAMMA_API_URL == "https://custom-gamma.example"
+        assert cfg.polymarket_ready is False
+        assert cfg.POLYMARKET_CHAIN_ID is None
+        assert cfg.CLOB_API_URL is None
+        assert cfg.GAMMA_API_URL is None
+        assert "POLYMARKET_TEST_CHAIN_ID" in (cfg.polymarket_config_error or "")
 
 
 class TestTradingMarketIdCompatibility:
@@ -2488,11 +2493,11 @@ class TestSDKAlignment:
             assert "error" not in item or "Historical price data" not in item.get("error", "")
 
 
-class TestTestnetDnsFallbacks:
-    """Regression tests for DNS fallback when polytest hosts cannot be resolved."""
+class TestConfiguredHostFailures:
+    """Regression tests for using only the configured host."""
 
     @pytest.mark.asyncio
-    async def test_market_discovery_falls_back_from_polytest_gamma_host(self):
+    async def test_market_discovery_does_not_fall_back_from_polytest_gamma_host(self):
         from polymarket_mcp.tools import market_discovery
 
         market_discovery.set_gamma_api_url("https://gcomm-api.polytest.cloud")
@@ -2513,17 +2518,17 @@ class TestTestnetDnsFallbacks:
         with patch(
             "polymarket_mcp.tools.market_discovery.httpx.AsyncClient", return_value=async_client_cm
         ):
-            data = await market_discovery._fetch_gamma_markets("/markets", {"active": "true"}, limit=1)
+            with pytest.raises(httpx.ConnectError):
+                await market_discovery._fetch_gamma_markets("/markets", {"active": "true"}, limit=1)
 
-        assert data == [{"id": "m1"}]
         requested_urls = [call.args[0] for call in mock_http_client.get.await_args_list]
         assert requested_urls[0].startswith("https://gcomm-api.polytest.cloud/")
-        assert requested_urls[1].startswith("https://gamma-api.polymarket.com/")
+        assert len(requested_urls) == 1
 
-        market_discovery.set_gamma_api_url("https://gamma-api.polymarket.com")
+        market_discovery.set_gamma_api_url(None)
 
     @pytest.mark.asyncio
-    async def test_market_analysis_falls_back_from_polytest_gamma_host(self):
+    async def test_market_analysis_does_not_fall_back_from_polytest_gamma_host(self):
         from polymarket_mcp.tools import market_analysis
 
         market_analysis.set_api_urls("https://gcomm-api.polytest.cloud", "https://clob.polymarket.com")
@@ -2544,17 +2549,17 @@ class TestTestnetDnsFallbacks:
         with patch(
             "polymarket_mcp.tools.market_analysis.httpx.AsyncClient", return_value=async_client_cm
         ):
-            data = await market_analysis._fetch_gamma_api("/markets", {"active": "true"})
+            with pytest.raises(httpx.ConnectError):
+                await market_analysis._fetch_gamma_api("/markets", {"active": "true"})
 
-        assert data == [{"id": "m1"}]
         requested_urls = [call.args[0] for call in mock_http_client.get.await_args_list]
         assert requested_urls[0].startswith("https://gcomm-api.polytest.cloud/")
-        assert requested_urls[1].startswith("https://gamma-api.polymarket.com/")
+        assert len(requested_urls) == 1
 
-        market_analysis.set_api_urls("https://gamma-api.polymarket.com", "https://clob.polymarket.com")
+        market_analysis.set_api_urls(None, None)
 
     @pytest.mark.asyncio
-    async def test_market_analysis_falls_back_from_polytest_clob_host(self):
+    async def test_market_analysis_does_not_fall_back_from_polytest_clob_host(self):
         from polymarket_mcp.tools import market_analysis
 
         market_analysis.set_api_urls(
@@ -2577,11 +2582,11 @@ class TestTestnetDnsFallbacks:
         with patch(
             "polymarket_mcp.tools.market_analysis.httpx.AsyncClient", return_value=async_client_cm
         ):
-            data = await market_analysis._fetch_clob_api("/price", {"token_id": "1", "side": "BUY"})
+            with pytest.raises(httpx.ConnectError):
+                await market_analysis._fetch_clob_api("/price", {"token_id": "1", "side": "BUY"})
 
-        assert data == {"price": "0.42"}
         requested_urls = [call.args[0] for call in mock_http_client.get.await_args_list]
         assert requested_urls[0].startswith("https://clob-testnet.polytest.cloud/")
-        assert requested_urls[1].startswith("https://clob.polymarket.com/")
+        assert len(requested_urls) == 1
 
-        market_analysis.set_api_urls("https://gamma-api.polymarket.com", "https://clob.polymarket.com")
+        market_analysis.set_api_urls(None, None)

@@ -193,9 +193,13 @@ class TradingTools:
             )
 
             await self.rate_limiter.acquire(EndpointCategory.GAMMA_API)
-            gamma_api_url = getattr(
-                self.config, "GAMMA_API_URL", "https://gamma-api.polymarket.com"
-            ).rstrip("/")
+            gamma_api_url = getattr(self.config, "GAMMA_API_URL", None)
+            if not gamma_api_url:
+                raise RuntimeError(
+                    "Gamma API URL is not configured; set POLYMARKET_ENV and the required "
+                    "environment variables for the selected network"
+                )
+            gamma_api_url = gamma_api_url.rstrip("/")
             async with httpx.AsyncClient(timeout=15.0) as http_client:
                 response = await http_client.get(f"{gamma_api_url}/markets/{market_id}")
                 response.raise_for_status()
