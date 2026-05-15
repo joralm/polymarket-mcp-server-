@@ -659,12 +659,12 @@ class TestSDKCompatibility:
                 passphrase="test-api-passphrase",
             )
 
-        class LegacyBalanceClient:
+        class MockLegacyBalanceClient:
             def get_balance(self, address):
                 assert address == "0x" + "2" * 40
                 return {"balance": "42.5"}
 
-        client.client = LegacyBalanceClient()
+        client.client = MockLegacyBalanceClient()
         balance = await client.get_balance()
         assert balance["balance"] == "42.5"
 
@@ -801,10 +801,10 @@ class TestSDKCompatibility:
         """Client should fallback to Data API when SDK lacks get_positions()."""
         client = self._build_client()
 
-        class PositionsMissingClient:
+        class MockClientWithoutPositionsMethod:
             pass
 
-        client.client = PositionsMissingClient()
+        client.client = MockClientWithoutPositionsMethod()
 
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
@@ -1042,7 +1042,7 @@ class TestSDKCompatibility:
         call_count = 0
         refreshed = 0
 
-        class ZeroThenValueClient:
+        class MockBalanceClientReturningZeroThenValue:
             def get_balance_allowance(self_, params):
                 nonlocal call_count
                 call_count += 1
@@ -1062,7 +1062,7 @@ class TestSDKCompatibility:
             def set_api_creds(self_, creds):
                 pass
 
-        client.client = ZeroThenValueClient()
+        client.client = MockBalanceClientReturningZeroThenValue()
         balance = await client.get_balance()
 
         assert refreshed == 1, "Zero balance with configured creds should trigger one refresh"
@@ -1085,14 +1085,14 @@ class TestSDKCompatibility:
             api_passphrase="runtime-pass",
         )
 
-        class ZeroBalanceClient:
+        class MockZeroBalanceClient:
             def get_balance_allowance(self_, params):
                 return {"balance": "0", "available": "0"}
 
             def create_or_derive_api_key(self_):
                 pytest.fail("Should not refresh proxy credentials when creds were not configured")
 
-        client.client = ZeroBalanceClient()
+        client.client = MockZeroBalanceClient()
         balance = await client.get_balance()
 
         assert balance["balance"] == "0.0"
