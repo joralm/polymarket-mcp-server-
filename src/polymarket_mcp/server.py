@@ -58,6 +58,7 @@ STATUS_TOOL_COUNT = 1
 TRADING_TOOL_COUNT = 12
 PORTFOLIO_TOOL_COUNT = 8
 REALTIME_TOOL_COUNT = 7
+GEOBLOCK_CHECK_TIMEOUT_SECONDS = 10.0
 
 
 def _has_authenticated_trading_access() -> bool:
@@ -144,16 +145,14 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
         "restricted",
     )
     for key in candidate_keys:
-        if key not in payload:
-            continue
         value = payload.get(key)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
             normalized = value.strip().lower()
-            if normalized in {"true", "1", "yes", "y"}:
+            if normalized in {"true", "1"}:
                 return True
-            if normalized in {"false", "0", "no", "n"}:
+            if normalized in {"false", "0"}:
                 return False
     return None
 
@@ -170,7 +169,7 @@ async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
 
     url = f"{clob_api_url.rstrip('/')}/geoblock"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=GEOBLOCK_CHECK_TIMEOUT_SECONDS) as client:
             response = await client.get(url)
             response.raise_for_status()
             payload = response.json()
