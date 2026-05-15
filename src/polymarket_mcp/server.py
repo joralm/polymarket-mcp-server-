@@ -59,6 +59,7 @@ TRADING_TOOL_COUNT = 12
 PORTFOLIO_TOOL_COUNT = 8
 REALTIME_TOOL_COUNT = 7
 GEOBLOCK_CHECK_TIMEOUT_SECONDS = 10.0
+GEOBLOCK_CONNECT_TIMEOUT_SECONDS = 5.0
 
 
 def _has_authenticated_trading_access() -> bool:
@@ -137,8 +138,10 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
         return None
 
     candidate_keys = (
-        "blocked",
+        # Primary documented key.
         "geoblocked",
+        # Backward/alternate spellings observed across APIs and proxies.
+        "blocked",
         "geo_blocked",
         "is_blocked",
         "is_geoblocked",
@@ -169,7 +172,13 @@ async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
 
     url = f"{clob_api_url.rstrip('/')}/geoblock"
     try:
-        async with httpx.AsyncClient(timeout=GEOBLOCK_CHECK_TIMEOUT_SECONDS) as client:
+        timeout = httpx.Timeout(
+            connect=GEOBLOCK_CONNECT_TIMEOUT_SECONDS,
+            read=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+            write=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+            pool=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(url)
             response.raise_for_status()
             payload = response.json()
