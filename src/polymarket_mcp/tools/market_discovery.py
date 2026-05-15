@@ -329,7 +329,7 @@ async def get_closing_soon_markets(hours: int = 24, limit: int = 20) -> List[Dic
             if end_date:
                 end_dt = _parse_market_end_datetime(end_date)
                 if end_dt is None:
-                    logger.warning(f"Failed to parse end_date: {end_date}, error: invalid datetime")
+                    logger.warning("Failed to parse end_date: %s", end_date)
                     continue
                 if end_dt <= cutoff_time:
                     closing_soon.append(market)
