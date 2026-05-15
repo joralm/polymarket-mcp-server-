@@ -41,6 +41,7 @@ def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
         return None
     try:
         if isinstance(end_date, str):
+            # Python 3.10 `fromisoformat` does not accept trailing `Z`, so normalize to UTC offset.
             parsed = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
         else:
             parsed = datetime.fromtimestamp(int(end_date), tz=timezone.utc)
