@@ -12,6 +12,7 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
+from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
 from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
@@ -1004,8 +1005,6 @@ class TestClobClientSignatureType:
             self_inner._ClobClient__tick_sizes = {}
             self_inner._ClobClient__neg_risk = {}
             self_inner._ClobClient__fee_rates = {}
-
-        from py_clob_client_v2.client import ClobClient
 
         with patch.object(ClobClient, "__init__", fake_clob_init):
             client = PolymarketClient(
