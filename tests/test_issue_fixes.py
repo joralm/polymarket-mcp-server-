@@ -8,6 +8,7 @@ Tests for GitHub issue fixes (#2, #6, #10).
 
 import pytest
 import json
+import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
@@ -613,8 +614,8 @@ class TestWalletConfigFlow:
         )
 
         assert cfg.POLYMARKET_CHAIN_ID == 80002
-        assert cfg.CLOB_API_URL == "https://clob.polymarket.com"
-        assert cfg.GAMMA_API_URL == "https://gamma-api.polymarket.com"
+        assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
+        assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
 
     def test_config_keeps_explicit_overrides_in_testnet(self):
         cfg = PolymarketConfig(
@@ -1455,8 +1456,8 @@ class TestMarketAnalysisIdentifierCompatibility:
         fake_config = MagicMock()
         fake_config.POLYMARKET_ENV = "testnet"
         fake_config.POLYMARKET_CHAIN_ID = 80002
-        fake_config.CLOB_API_URL = "https://clob.polymarket.com"
-        fake_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        fake_config.CLOB_API_URL = "https://clob-testnet.polytest.cloud"
+        fake_config.GAMMA_API_URL = "https://gcomm-api.polytest.cloud"
         fake_config.effective_funder = "0x" + "2" * 40
 
         fake_client = MagicMock()
@@ -2485,3 +2486,102 @@ class TestSDKAlignment:
         for item in result:
             assert "Historical price data not available" not in str(item)
             assert "error" not in item or "Historical price data" not in item.get("error", "")
+
+
+class TestTestnetDnsFallbacks:
+    """Regression tests for DNS fallback when polytest hosts cannot be resolved."""
+
+    @pytest.mark.asyncio
+    async def test_market_discovery_falls_back_from_polytest_gamma_host(self):
+        from polymarket_mcp.tools import market_discovery
+
+        market_discovery.set_gamma_api_url("https://gcomm-api.polytest.cloud")
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"id": "m1"}]
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(
+            side_effect=[httpx.ConnectError("Name or service not known"), mock_response]
+        )
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch(
+            "polymarket_mcp.tools.market_discovery.httpx.AsyncClient", return_value=async_client_cm
+        ):
+            data = await market_discovery._fetch_gamma_markets("/markets", {"active": "true"}, limit=1)
+
+        assert data == [{"id": "m1"}]
+        requested_urls = [call.args[0] for call in mock_http_client.get.await_args_list]
+        assert requested_urls[0].startswith("https://gcomm-api.polytest.cloud/")
+        assert requested_urls[1].startswith("https://gamma-api.polymarket.com/")
+
+        market_discovery.set_gamma_api_url("https://gamma-api.polymarket.com")
+
+    @pytest.mark.asyncio
+    async def test_market_analysis_falls_back_from_polytest_gamma_host(self):
+        from polymarket_mcp.tools import market_analysis
+
+        market_analysis.set_api_urls("https://gcomm-api.polytest.cloud", "https://clob.polymarket.com")
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"id": "m1"}]
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(
+            side_effect=[httpx.ConnectError("Name or service not known"), mock_response]
+        )
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch(
+            "polymarket_mcp.tools.market_analysis.httpx.AsyncClient", return_value=async_client_cm
+        ):
+            data = await market_analysis._fetch_gamma_api("/markets", {"active": "true"})
+
+        assert data == [{"id": "m1"}]
+        requested_urls = [call.args[0] for call in mock_http_client.get.await_args_list]
+        assert requested_urls[0].startswith("https://gcomm-api.polytest.cloud/")
+        assert requested_urls[1].startswith("https://gamma-api.polymarket.com/")
+
+        market_analysis.set_api_urls("https://gamma-api.polymarket.com", "https://clob.polymarket.com")
+
+    @pytest.mark.asyncio
+    async def test_market_analysis_falls_back_from_polytest_clob_host(self):
+        from polymarket_mcp.tools import market_analysis
+
+        market_analysis.set_api_urls(
+            "https://gamma-api.polymarket.com", "https://clob-testnet.polytest.cloud"
+        )
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {"price": "0.42"}
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(
+            side_effect=[httpx.ConnectError("Name or service not known"), mock_response]
+        )
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch(
+            "polymarket_mcp.tools.market_analysis.httpx.AsyncClient", return_value=async_client_cm
+        ):
+            data = await market_analysis._fetch_clob_api("/price", {"token_id": "1", "side": "BUY"})
+
+        assert data == {"price": "0.42"}
+        requested_urls = [call.args[0] for call in mock_http_client.get.await_args_list]
+        assert requested_urls[0].startswith("https://clob-testnet.polytest.cloud/")
+        assert requested_urls[1].startswith("https://clob.polymarket.com/")
+
+        market_analysis.set_api_urls("https://gamma-api.polymarket.com", "https://clob.polymarket.com")
