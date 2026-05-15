@@ -769,7 +769,9 @@ class PolymarketClient:
             api_secret=new_creds.api_secret,
             api_passphrase=new_creds.api_passphrase,
         )
-        # After refresh, we should treat credentials as wallet-derived/runtime-managed.
+        # After refresh, treat credentials as wallet-derived/runtime-managed.
+        # `_zero_balance_proxy_refresh_attempted` remains the one-shot guard
+        # that prevents repeated refresh loops on truly zero-balance wallets.
         self._api_creds_from_config = False
         # Push updated creds into the live ClobClient instance so subsequent
         # calls use the new key without a full re-initialization.
