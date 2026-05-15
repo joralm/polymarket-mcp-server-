@@ -124,7 +124,12 @@ def _network_name_from_chain_id(chain_id: Optional[int]) -> str:
 
 
 def _extract_geoblock_status(payload: Any) -> Optional[bool]:
-    """Extract geoblock boolean from documented/common response shapes."""
+    """
+    Extract geoblock boolean from documented/common response shapes.
+
+    The documented field is expected to be `geoblocked`, but we also accept
+    legacy/alternate boolean keys to stay resilient to payload drift.
+    """
     if isinstance(payload, bool):
         return payload
     if not isinstance(payload, dict):
