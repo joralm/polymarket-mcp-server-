@@ -116,6 +116,8 @@ to confirm your environment is correct before any trading actions.
 - Set `POLYMARKET_ENV=testnet` to route automatically to Polytest endpoints (`clob-testnet.polytest.cloud` and `gcomm-api.polytest.cloud`) with Amoy (`80002`).
 - You can still override `POLYMARKET_CHAIN_ID`, `CLOB_API_URL`, and `GAMMA_API_URL` manually.
 
+> ⚠️ **Testnet status unknown**: The testnet endpoints (`clob-testnet.polytest.cloud`, `gcomm-api.polytest.cloud`) may currently be unavailable — DNS lookups may fail with `NXDOMAIN`. Mainnet (`gamma-api.polymarket.com` / `clob.polymarket.com`) is the known active environment. The codebase remains prepared for testnet use when/if those endpoints become accessible again.
+
 **Switch modes anytime:** Just run `python setup_wizard.py` again
 
 ---
