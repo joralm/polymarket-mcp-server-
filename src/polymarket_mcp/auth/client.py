@@ -784,7 +784,13 @@ class PolymarketClient:
         if not self.api_creds:
             logger.info("No API credentials found. Attempting to create...")
             await self.create_api_credentials()
+            post_create_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
             self._api_credentials_verified = True
+            logger.debug(
+                "Post-create credential probe result: extracted_balance=%s verified=%s",
+                self._extract_numeric_balance(post_create_probe),
+                self._api_credentials_verified,
+            )
             logger.info("API credentials created successfully!")
             return
 

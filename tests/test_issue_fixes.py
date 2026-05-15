@@ -1486,7 +1486,7 @@ class TestMarketAnalysisIdentifierCompatibility:
             mock_fetch.return_value = [
                 {
                     "question": "soon market",
-                    "end_date_iso": "2020-01-01T00:00:00Z",
+                    "end_date_iso": (datetime.utcnow() - timedelta(days=365)).isoformat() + "Z",
                 }
             ]
             results = await market_discovery.get_closing_soon_markets(hours=24, limit=5)
