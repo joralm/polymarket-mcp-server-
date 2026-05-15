@@ -96,10 +96,10 @@ class PolymarketConfig(BaseSettings):
 
     # API Endpoints
     CLOB_API_URL: str = Field(
-        default=MAINNET_CLOB_URL, description="Polymarket CLOB API endpoint"
+        default="https://clob.polymarket.com", description="Polymarket CLOB API endpoint"
     )
     GAMMA_API_URL: str = Field(
-        default=MAINNET_GAMMA_URL, description="Gamma API endpoint for market data"
+        default="https://gamma-api.polymarket.com", description="Gamma API endpoint for market data"
     )
 
     # WebSocket Controls
@@ -231,7 +231,7 @@ class PolymarketConfig(BaseSettings):
 
         Explicit values from environment variables always win over inferred defaults.
         """
-        fields_set = set(self.model_fields_set)
+        fields_set = self.model_fields_set
         if self.POLYMARKET_ENV == "testnet":
             if "POLYMARKET_CHAIN_ID" not in fields_set:
                 self.POLYMARKET_CHAIN_ID = self.TESTNET_CHAIN_ID

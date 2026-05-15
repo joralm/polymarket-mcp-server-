@@ -51,6 +51,12 @@ safety_limits: Optional[SafetyLimits] = None
 rate_limiter = None
 trading_tools: Optional[TradingTools] = None
 websocket_manager: Optional[WebSocketManager] = None
+DISCOVERY_TOOL_COUNT = 8
+ANALYSIS_TOOL_COUNT = 10
+STATUS_TOOL_COUNT = 1
+TRADING_TOOL_COUNT = 12
+PORTFOLIO_TOOL_COUNT = 8
+REALTIME_TOOL_COUNT = 7
 
 
 def _has_authenticated_trading_access() -> bool:
@@ -609,22 +615,32 @@ async def initialize_server() -> None:
         logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
 
         # Report available tools based on authentication
-        static_tool_count = 8 + 10 + 1
-        realtime_count = 7 if config.WS_ENABLED else 0
-        trading_portfolio_count = 12 + 8 if _has_authenticated_trading_access() else 0
+        static_tool_count = DISCOVERY_TOOL_COUNT + ANALYSIS_TOOL_COUNT + STATUS_TOOL_COUNT
+        realtime_count = REALTIME_TOOL_COUNT if config.WS_ENABLED else 0
+        trading_portfolio_count = (
+            TRADING_TOOL_COUNT + PORTFOLIO_TOOL_COUNT if _has_authenticated_trading_access() else 0
+        )
         total_tools = static_tool_count + realtime_count + trading_portfolio_count
         if _has_authenticated_trading_access():
             logger.info("Mode: FULL (authenticated)")
             logger.info(
-                "Available tools: %s total (8 Discovery, 10 Analysis, 1 Server Status, 12 Trading, 8 Portfolio, %s Real-time)",
+                "Available tools: %s total (%s Discovery, %s Analysis, %s Server Status, %s Trading, %s Portfolio, %s Real-time)",
                 total_tools,
+                DISCOVERY_TOOL_COUNT,
+                ANALYSIS_TOOL_COUNT,
+                STATUS_TOOL_COUNT,
+                TRADING_TOOL_COUNT,
+                PORTFOLIO_TOOL_COUNT,
                 realtime_count,
             )
         else:
             logger.info("Mode: READ-ONLY (no API credentials)")
             logger.info(
-                "Available tools: %s total (8 Discovery, 10 Analysis, 1 Server Status, %s Real-time)",
+                "Available tools: %s total (%s Discovery, %s Analysis, %s Server Status, %s Real-time)",
                 total_tools,
+                DISCOVERY_TOOL_COUNT,
+                ANALYSIS_TOOL_COUNT,
+                STATUS_TOOL_COUNT,
                 realtime_count,
             )
             logger.info("Trading and Portfolio tools require API credentials")

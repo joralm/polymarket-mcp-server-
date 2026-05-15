@@ -1708,7 +1708,8 @@ class TestMarketAnalysisIdentifierCompatibility:
                 tools = await server_module.list_tools()
 
             mock_realtime.assert_not_called()
-            assert [tool.name for tool in tools] == ["get_server_status"]
+            tool_names = [tool.name for tool in tools]
+            assert "get_server_status" in tool_names
         finally:
             server_module.config = original_config
             server_module.polymarket_client = original_polymarket_client

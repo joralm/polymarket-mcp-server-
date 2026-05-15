@@ -34,8 +34,10 @@ CLOB_API_URL = "https://clob.polymarket.com"
 def set_api_urls(gamma_api_url: str, clob_api_url: str) -> None:
     """Update Gamma/CLOB API URLs at runtime from loaded configuration."""
     global GAMMA_API_URL, CLOB_API_URL
-    GAMMA_API_URL = (gamma_api_url or GAMMA_API_URL).rstrip("/")
-    CLOB_API_URL = (clob_api_url or CLOB_API_URL).rstrip("/")
+    if gamma_api_url:
+        GAMMA_API_URL = gamma_api_url.rstrip("/")
+    if clob_api_url:
+        CLOB_API_URL = clob_api_url.rstrip("/")
 
 
 # Data Models
