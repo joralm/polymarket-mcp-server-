@@ -592,7 +592,9 @@ class TestWalletConfigFlow:
         assert mock_create.call_args.kwargs["private_key"] == fake_config.POLYGON_PRIVATE_KEY
         assert mock_create.call_args.kwargs["address"] == fake_config.POLYGON_ADDRESS
         assert mock_create.call_args.kwargs["chain_id"] == fake_config.POLYMARKET_CHAIN_ID
-        assert mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
+        assert (
+            mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
+        )
         assert mock_create.call_args.kwargs["funder"] == fake_config.effective_funder
         assert mock_create.call_args.kwargs["host"] == fake_config.CLOB_API_URL
 
@@ -1230,7 +1232,9 @@ class TestSDKCompatibility:
         assert call_count == 1, "Should not retry on non-401 errors"
 
     @pytest.mark.asyncio
-    async def test_get_balance_refreshes_proxy_credentials_once_when_zero_from_configured_creds(self):
+    async def test_get_balance_refreshes_proxy_credentials_once_when_zero_from_configured_creds(
+        self,
+    ):
         """Configured legacy creds returning zero should trigger one proxy-mode refresh attempt."""
         client = self._build_client()
 
@@ -1333,9 +1337,9 @@ class TestClobClientSignatureType:
             "ClobClient default signature_type should be 3 (POLY_1271/deposit wallet) "
             "for current MetaMask deposit-wallet API flows"
         )
-        assert captured_args.get("funder") == "0x" + "a" * 40, (
-            "funder must default to the user's signer address when POLYMARKET_FUNDER is not provided"
-        )
+        assert (
+            captured_args.get("funder") == "0x" + "a" * 40
+        ), "funder must default to the user's signer address when POLYMARKET_FUNDER is not provided"
 
     def test_initialize_client_accepts_distinct_funder_and_signature_type(self):
         """New deposit-wallet flows must pass explicit funder + signature_type through."""
@@ -1419,7 +1423,9 @@ class TestPortfolioBalanceHandling:
         async_client_cm.__aenter__.return_value = mock_http_client
         async_client_cm.__aexit__.return_value = None
 
-        with patch("polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm):
+        with patch(
+            "polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm
+        ):
             result = await get_portfolio_value(
                 polymarket_client=polymarket_client,
                 rate_limiter=rate_limiter,
@@ -1471,7 +1477,9 @@ class TestPortfolioBalanceHandling:
         async_client_cm.__aenter__.return_value = mock_http_client
         async_client_cm.__aexit__.return_value = None
 
-        with patch("polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm):
+        with patch(
+            "polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm
+        ):
             await get_portfolio_value(
                 polymarket_client=polymarket_client,
                 rate_limiter=rate_limiter,
@@ -2173,6 +2181,175 @@ class TestEnsureValidApiCredentials:
                 setattr(server_module, key, val)
 
     @pytest.mark.asyncio
+    async def test_initialize_server_aborts_when_geoblocked(self):
+        """initialize_server() must fail fast when startup geoblock check returns blocked."""
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        mock_config = MagicMock()
+        mock_config.POLYGON_PRIVATE_KEY = "0x" + "a" * 64
+        mock_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        mock_config.POLYMARKET_CHAIN_ID = 137
+        mock_config.POLYMARKET_API_KEY = "k"
+        mock_config.POLYMARKET_API_SECRET = "s"
+        mock_config.POLYMARKET_PASSPHRASE = "p"
+        mock_config.POLYMARKET_ENV = "mainnet"
+        mock_config.CLOB_API_URL = "https://clob.polymarket.com"
+        mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
+        mock_config.WS_ENABLED = False
+        mock_config.LOG_LEVEL = "INFO"
+        mock_config.DEMO_MODE = False
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=mock_config),
+                patch(
+                    "polymarket_mcp.server.get_polymarket_runtime_state", return_value=(True, None)
+                ),
+                patch(
+                    "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
+                ) as mock_geoblock,
+                patch("polymarket_mcp.server.create_polymarket_client") as mock_create,
+            ):
+                mock_geoblock.return_value = True
+                with pytest.raises(RuntimeError, match="geoblocked"):
+                    await server_module.initialize_server()
+
+            mock_create.assert_not_called()
+            mock_geoblock.assert_awaited_once_with(mock_config.CLOB_API_URL)
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_runs_geoblock_check(self):
+        """initialize_server() should call startup geoblock check with CLOB host."""
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        mock_client = MagicMock(spec=PolymarketClient)
+        mock_client.has_api_credentials.return_value = True
+        mock_client.ensure_valid_api_credentials = AsyncMock()
+
+        mock_config = MagicMock()
+        mock_config.POLYGON_PRIVATE_KEY = "0x" + "a" * 64
+        mock_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        mock_config.POLYMARKET_CHAIN_ID = 137
+        mock_config.POLYMARKET_API_KEY = "k"
+        mock_config.POLYMARKET_API_SECRET = "s"
+        mock_config.POLYMARKET_PASSPHRASE = "p"
+        mock_config.POLYMARKET_ENV = "mainnet"
+        mock_config.CLOB_API_URL = "https://clob.polymarket.com"
+        mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
+        mock_config.WS_ENABLED = False
+        mock_config.LOG_LEVEL = "INFO"
+        mock_config.DEMO_MODE = False
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=mock_config),
+                patch(
+                    "polymarket_mcp.server.get_polymarket_runtime_state", return_value=(True, None)
+                ),
+                patch(
+                    "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
+                ) as mock_geoblock,
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                ) as mock_create,
+                patch("polymarket_mcp.server.create_safety_limits_from_config"),
+                patch("polymarket_mcp.server.get_rate_limiter"),
+                patch("polymarket_mcp.server.TradingTools"),
+            ):
+                mock_geoblock.return_value = False
+                await server_module.initialize_server()
+
+            mock_geoblock.assert_awaited_once_with(mock_config.CLOB_API_URL)
+            mock_create.assert_called_once()
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_continues_when_geoblock_inconclusive(self):
+        """initialize_server() should continue when geoblock check returns None."""
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        mock_client = MagicMock(spec=PolymarketClient)
+        mock_client.has_api_credentials.return_value = True
+        mock_client.ensure_valid_api_credentials = AsyncMock()
+
+        mock_config = MagicMock()
+        mock_config.POLYGON_PRIVATE_KEY = "0x" + "a" * 64
+        mock_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        mock_config.POLYMARKET_CHAIN_ID = 137
+        mock_config.POLYMARKET_API_KEY = "k"
+        mock_config.POLYMARKET_API_SECRET = "s"
+        mock_config.POLYMARKET_PASSPHRASE = "p"
+        mock_config.POLYMARKET_ENV = "mainnet"
+        mock_config.CLOB_API_URL = "https://clob.polymarket.com"
+        mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
+        mock_config.WS_ENABLED = False
+        mock_config.LOG_LEVEL = "INFO"
+        mock_config.DEMO_MODE = False
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=mock_config),
+                patch(
+                    "polymarket_mcp.server.get_polymarket_runtime_state", return_value=(True, None)
+                ),
+                patch(
+                    "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
+                ) as mock_geoblock,
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                ) as mock_create,
+                patch("polymarket_mcp.server.create_safety_limits_from_config"),
+                patch("polymarket_mcp.server.get_rate_limiter"),
+                patch("polymarket_mcp.server.TradingTools"),
+            ):
+                mock_geoblock.return_value = None
+                await server_module.initialize_server()
+
+            mock_geoblock.assert_awaited_once_with(mock_config.CLOB_API_URL)
+            mock_create.assert_called_once()
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
+
+    @pytest.mark.asyncio
     async def test_initialize_server_demo_mode_skips_auth_bootstrap(self):
         """initialize_server() must skip wallet/auth bootstrap in DEMO mode."""
         import polymarket_mcp.server as server_module
@@ -2308,9 +2485,7 @@ class TestSDKAlignment:
 
         client.client = FakeClobClient()
 
-        result = await client.post_market_order(
-            token_id="token-abc", amount=25.0, side="BUY"
-        )
+        result = await client.post_market_order(token_id="token-abc", amount=25.0, side="BUY")
 
         assert result["orderID"] == "mkt-001"
         assert isinstance(captured["order_args"], MarketOrderArgsV2)
@@ -2355,16 +2530,19 @@ class TestSDKAlignment:
             }
         )
 
-        result = await tt.create_market_order(
-            market_id="0xcondition", side="BUY", size=50.0
-        )
+        result = await tt.create_market_order(market_id="0xcondition", side="BUY", size=50.0)
 
         assert result["success"] is True
         assert result["execution_type"] == "market_order"
         # Must have called post_market_order with USDC amount, not shares
         pm_client.post_market_order.assert_awaited_once()
         call_kwargs = pm_client.post_market_order.call_args
-        assert call_kwargs.kwargs.get("amount", call_kwargs.args[1] if len(call_kwargs.args) > 1 else None) == 50.0
+        assert (
+            call_kwargs.kwargs.get(
+                "amount", call_kwargs.args[1] if len(call_kwargs.args) > 1 else None
+            )
+            == 50.0
+        )
 
     @pytest.mark.asyncio
     async def test_trading_tools_create_market_order_does_not_call_create_limit_order(self):
@@ -2537,9 +2715,7 @@ class TestSDKAlignment:
 
         history_payload = {"history": [{"t": 1700000000, "p": 0.55}, {"t": 1700003600, "p": 0.57}]}
 
-        with patch.object(
-            market_analysis, "_fetch_clob_api", new_callable=AsyncMock
-        ) as mock_fetch:
+        with patch.object(market_analysis, "_fetch_clob_api", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = history_payload
             result = await market_analysis.get_price_history("token-xyz", resolution="1h")
 
@@ -2553,22 +2729,23 @@ class TestSDKAlignment:
         assert result[0]["p"] == 0.55
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("resolution,expected_interval", [
-        ("1h", "1h"),
-        ("6h", "6h"),
-        ("1d", "1d"),
-        ("1w", "1w"),
-        ("max", "max"),
-    ])
+    @pytest.mark.parametrize(
+        "resolution,expected_interval",
+        [
+            ("1h", "1h"),
+            ("6h", "6h"),
+            ("1d", "1d"),
+            ("1w", "1w"),
+            ("max", "max"),
+        ],
+    )
     async def test_get_price_history_passes_interval_for_standard_resolutions(
         self, resolution, expected_interval
     ):
         """Each recognised resolution string must be forwarded as interval= to the CLOB."""
         from polymarket_mcp.tools import market_analysis
 
-        with patch.object(
-            market_analysis, "_fetch_clob_api", new_callable=AsyncMock
-        ) as mock_fetch:
+        with patch.object(market_analysis, "_fetch_clob_api", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = {"history": []}
             await market_analysis.get_price_history("token-xyz", resolution=resolution)
 
@@ -2583,9 +2760,7 @@ class TestSDKAlignment:
         """get_price_history must never return the old 'not available' stub error dict."""
         from polymarket_mcp.tools import market_analysis
 
-        with patch.object(
-            market_analysis, "_fetch_clob_api", new_callable=AsyncMock
-        ) as mock_fetch:
+        with patch.object(market_analysis, "_fetch_clob_api", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = {"history": []}
             result = await market_analysis.get_price_history("token-xyz")
 
@@ -2635,7 +2810,9 @@ class TestConfiguredHostFailures:
 
         original_gamma_url = market_analysis.GAMMA_API_URL
         original_clob_url = market_analysis.CLOB_API_URL
-        market_analysis.set_api_urls("https://gcomm-api.polytest.cloud", "https://clob.polymarket.com")
+        market_analysis.set_api_urls(
+            "https://gcomm-api.polytest.cloud", "https://clob.polymarket.com"
+        )
 
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None

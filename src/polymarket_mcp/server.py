@@ -10,6 +10,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
+import httpx
 import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
@@ -57,6 +58,8 @@ STATUS_TOOL_COUNT = 1
 TRADING_TOOL_COUNT = 12
 PORTFOLIO_TOOL_COUNT = 8
 REALTIME_TOOL_COUNT = 7
+GEOBLOCK_CHECK_TIMEOUT_SECONDS = 10.0
+GEOBLOCK_CONNECT_TIMEOUT_SECONDS = 5.0
 
 
 def _has_authenticated_trading_access() -> bool:
@@ -120,6 +123,80 @@ def _network_name_from_chain_id(chain_id: Optional[int]) -> str:
     if chain_id is None:
         return "unknown"
     return f"Unknown ({chain_id})"
+
+
+def _extract_geoblock_status(payload: Any) -> Optional[bool]:
+    """
+    Extract geoblock boolean from documented/common response shapes.
+
+    Args:
+        payload: JSON-decoded response body from CLOB /geoblock endpoint.
+
+    The documented field is expected to be `geoblocked`, but we also accept
+    legacy/alternate boolean keys to stay resilient to payload drift.
+    """
+    if isinstance(payload, bool):
+        return payload
+    if not isinstance(payload, dict):
+        return None
+
+    candidate_keys = (
+        # Primary documented key.
+        "geoblocked",
+        # Backward/alternate spellings observed across APIs and proxies.
+        "blocked",
+        "geo_blocked",
+        "is_blocked",
+        "is_geoblocked",
+    )
+    for key in candidate_keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            logger.debug("Geoblock key '%s' returned string value '%s'", key, value)
+            if normalized in {"true", "1"}:
+                return True
+            if normalized in {"false", "0"}:
+                return False
+    return None
+
+
+async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
+    """
+    Query Polymarket geoblock endpoint at startup.
+
+    Returns:
+        True if geoblocked, False if explicitly not geoblocked, None if inconclusive.
+    """
+    if not clob_api_url:
+        return None
+
+    url = f"{clob_api_url.rstrip('/')}/geoblock"
+    try:
+        timeout = httpx.Timeout(
+            connect=GEOBLOCK_CONNECT_TIMEOUT_SECONDS,
+            read=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+            write=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+            pool=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+        status = _extract_geoblock_status(payload)
+        if status is None:
+            logger.warning("Geoblock check returned unexpected payload: %s", payload)
+            return None
+        logger.info("Geoblock check: %s", "blocked" if status else "allowed")
+        return status
+    except httpx.HTTPError as geoblock_error:
+        logger.warning("Geoblock check unavailable (%s): %s", url, geoblock_error)
+        return None
+    except ValueError as geoblock_error:
+        logger.warning("Geoblock check returned invalid JSON (%s): %s", url, geoblock_error)
+        return None
 
 
 def _extract_available_balance(balance_payload: Any) -> Optional[float]:
@@ -345,9 +422,7 @@ async def read_resource(uri: str) -> str:
                 "clob_api": config.CLOB_API_URL if config else None,
                 "gamma_api": config.GAMMA_API_URL if config else None,
             },
-            "has_api_credentials": (
-                _has_authenticated_trading_access()
-            ),
+            "has_api_credentials": (_has_authenticated_trading_access()),
             "server_version": "0.1.0",
         }
         return json.dumps(status_data, indent=2)
@@ -542,6 +617,13 @@ async def initialize_server() -> None:
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
+        geoblocked = await _check_geoblock_status(config.CLOB_API_URL)
+        if geoblocked is True:
+            raise RuntimeError(
+                "Startup aborted: this server location is geoblocked by Polymarket "
+                "(CLOB /geoblock endpoint)"
+            )
+
         if not polymarket_ready:
             logger.warning(
                 "%s; skipping Polymarket initialization",
@@ -628,7 +710,9 @@ async def initialize_server() -> None:
 
         websocket_manager = None
         if not polymarket_ready:
-            logger.info("WebSocket manager skipped because Polymarket environment is not configured")
+            logger.info(
+                "WebSocket manager skipped because Polymarket environment is not configured"
+            )
         elif config.WS_ENABLED:
             # Initialize WebSocket manager
             logger.info("Initializing WebSocket manager...")
@@ -651,7 +735,9 @@ async def initialize_server() -> None:
         if polymarket_ready:
             logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
         else:
-            logger.info("Polymarket network access is disabled until required environment variables are set")
+            logger.info(
+                "Polymarket network access is disabled until required environment variables are set"
+            )
 
         # Report available tools based on authentication
         static_tool_count = DISCOVERY_TOOL_COUNT + ANALYSIS_TOOL_COUNT + STATUS_TOOL_COUNT
