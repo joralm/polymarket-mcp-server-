@@ -443,6 +443,28 @@ class PolymarketClient:
                     "Polymarket rejected this maker address for trading. "
                     "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
+            if self._is_signer_api_key_mismatch_error(e):
+                logger.warning(
+                    "Order signer/API-key mismatch detected; re-deriving API credentials and retrying once."
+                )
+                self._refresh_api_credentials(
+                    reason=(
+                        "Order signer mismatch detected — configured API key belongs to a "
+                        "different wallet and was replaced automatically"
+                    )
+                )
+                order_response = self.client.create_and_post_order(
+                    order_args, order_type=order_type_enum
+                )
+                logger.info(
+                    "Order posted after signer/API-key credential refresh: %s %s @ %s (token: %s, order_id: %s)",
+                    side,
+                    size,
+                    price,
+                    token_id,
+                    order_response.get("orderID") if isinstance(order_response, dict) else None,
+                )
+                return order_response
             logger.error(f"Failed to post order: {e}")
             raise
         except Exception as e:
@@ -552,6 +574,25 @@ class PolymarketClient:
                     "Polymarket rejected this maker address for trading. "
                     "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
+            if self._is_signer_api_key_mismatch_error(e):
+                logger.warning(
+                    "Market-order signer/API-key mismatch detected; re-deriving API credentials and retrying once."
+                )
+                self._refresh_api_credentials(
+                    reason=(
+                        "Order signer mismatch detected — configured API key belongs to a "
+                        "different wallet and was replaced automatically"
+                    )
+                )
+                order_response = self.client.create_and_post_market_order(order_args)
+                logger.info(
+                    "Market order posted after signer/API-key credential refresh: %s $%.4f (token: %s, order_id: %s)",
+                    side.upper(),
+                    amount,
+                    token_id,
+                    order_response.get("orderID") if isinstance(order_response, dict) else None,
+                )
+                return order_response
             logger.error("Failed to post market order: %s", e)
             raise
         except Exception as e:
@@ -898,6 +939,14 @@ class PolymarketClient:
                 return True
         return False
 
+    @staticmethod
+    def _is_signer_api_key_mismatch_error(exc: PolyApiException) -> bool:
+        """Return True when CLOB reports API key wallet does not match order signer."""
+        if exc.status_code != 400:
+            return False
+        error_text = str(exc).lower()
+        return "order signer address has to be the address of the api key" in error_text
+
     def _handle_zero_balance_refresh(
         self, balance_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -932,6 +981,64 @@ class PolymarketClient:
             return refreshed
 
         return balance_data
+
+    def _reconcile_configured_api_key_with_signer(self) -> None:
+        """Replace configured credentials when they don't match signer-derived API key."""
+        if not self.api_creds or not self._api_creds_from_config:
+            return
+
+        derive_fn = getattr(self.client, "create_or_derive_api_key", None)
+        if not callable(derive_fn):
+            return
+
+        try:
+            derived = derive_fn()
+        except Exception as exc:
+            logger.warning(
+                "Could not reconcile configured API key with signer-derived credentials: %s",
+                exc,
+            )
+            logger.debug("API-key reconciliation exception details", exc_info=True)
+            return
+
+        derived_api_key = getattr(derived, "api_key", None)
+        if not derived_api_key:
+            logger.warning(
+                "Signer-derived API credential probe returned no api_key; keeping configured credentials."
+            )
+            return
+
+        if derived_api_key == self.api_creds.api_key:
+            logger.debug("Configured API key already matches signer-derived wallet credentials.")
+            return
+
+        logger.warning(
+            "Configured API key does not belong to signer %s; replacing with signer-derived credentials.",
+            self.address,
+        )
+        self.api_creds = ApiCreds(
+            api_key=derived.api_key,
+            api_secret=derived.api_secret,
+            api_passphrase=derived.api_passphrase,
+        )
+        self._api_creds_from_config = False
+        self._api_credentials_verified = False
+
+        set_api_creds_fn = getattr(self.client, "set_api_creds", None)
+        if callable(set_api_creds_fn):
+            set_api_creds_fn(self.api_creds)
+        else:
+            self._initialize_client()
+
+        _log_new_credentials(
+            api_key=self.api_creds.api_key,
+            api_secret=self.api_creds.api_secret,
+            passphrase=self.api_creds.api_passphrase,
+            reason=(
+                "Configured API key belonged to a different wallet — replaced "
+                "with signer-derived credentials"
+            ),
+        )
 
     async def ensure_valid_api_credentials(self) -> None:
         """
@@ -972,6 +1079,7 @@ class PolymarketClient:
 
         logger.info("Testing existing API credentials...")
         try:
+            self._reconcile_configured_api_key_with_signer()
             logger.debug(
                 "Credential verification start: signer=%s funder=%s signature_type=%s has_l2=%s",
                 self.address,

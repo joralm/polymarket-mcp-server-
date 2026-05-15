@@ -712,6 +712,33 @@ class TestSDKCompatibility:
         assert "maker address" in error_message
 
     @pytest.mark.asyncio
+    async def test_post_order_refreshes_and_retries_when_signer_api_key_mismatch(self):
+        client = self._build_client()
+
+        mismatch_resp = MagicMock()
+        mismatch_resp.status_code = 400
+        mismatch_resp.json.return_value = {
+            "error": "the order signer address has to be the address of the API KEY"
+        }
+
+        client.client = MagicMock()
+        client.client.create_and_post_order.side_effect = [
+            PolyApiException(resp=mismatch_resp),
+            {"orderID": "ord-1", "status": "live"},
+        ]
+        with patch.object(client, "_refresh_api_credentials") as mock_refresh:
+            response = await client.post_order(
+                token_id="123",
+                price=0.5,
+                size=1,
+                side="BUY",
+            )
+
+        mock_refresh.assert_called_once()
+        assert client.client.create_and_post_order.call_count == 2
+        assert response["orderID"] == "ord-1"
+
+    @pytest.mark.asyncio
     async def test_get_balance_falls_back_to_get_balance_allowance(self):
         """Client should support SDKs that only expose get_balance_allowance()."""
         client = self._build_client()
@@ -1818,6 +1845,25 @@ class TestEnsureValidApiCredentials:
 
         mock_probe.assert_called_once()
         mock_refresh.assert_not_called()
+        assert client.has_verified_api_credentials()
+
+    @pytest.mark.asyncio
+    async def test_configured_creds_from_different_wallet_are_reconciled_before_probe(self):
+        """Startup must replace env creds if signer-derived API key differs."""
+        client = self._make_client(with_creds=True)
+        client.client.create_or_derive_api_key.return_value = ApiCreds(
+            api_key="derived-key",
+            api_secret="derived-secret",
+            api_passphrase="derived-pass",
+        )
+        client.client.set_api_creds = MagicMock()
+
+        with patch.object(client, "_fetch_balance_once", return_value={"balance": "10.0"}):
+            await client.ensure_valid_api_credentials()
+
+        client.client.set_api_creds.assert_called_once()
+        assert client.api_creds.api_key == "derived-key"
+        assert client._api_creds_from_config is False
         assert client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
