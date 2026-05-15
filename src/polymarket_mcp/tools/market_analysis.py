@@ -17,7 +17,7 @@ Provides 10 tools for analyzing markets:
 import json
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 from pydantic import BaseModel, Field
 import mcp.types as types
 import httpx
@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 # API URLs
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
 CLOB_API_URL = "https://clob.polymarket.com"
+
+
+def set_api_urls(gamma_api_url: str, clob_api_url: str) -> None:
+    """Update Gamma/CLOB API URLs at runtime from loaded configuration."""
+    global GAMMA_API_URL, CLOB_API_URL
+    GAMMA_API_URL = (gamma_api_url or GAMMA_API_URL).rstrip("/")
+    CLOB_API_URL = (clob_api_url or CLOB_API_URL).rstrip("/")
 
 
 # Data Models

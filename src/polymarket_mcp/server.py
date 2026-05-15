@@ -99,6 +99,86 @@ def _log_docker_login_report() -> None:
         logger.info("    5) LOG_LEVEL=DEBUG to inspect auth diagnostics")
 
 
+def _network_name_from_chain_id(chain_id: Optional[int]) -> str:
+    """Map chain ID to human-friendly network name."""
+    if chain_id == 80002:
+        return "Polygon Amoy"
+    if chain_id == 137:
+        return "Polygon Mainnet"
+    if chain_id is None:
+        return "unknown"
+    return f"Unknown ({chain_id})"
+
+
+def _extract_available_balance(balance_payload: Any) -> Optional[float]:
+    """Extract available/spendable USDC balance from payload variants."""
+    if isinstance(balance_payload, (int, float)):
+        return float(balance_payload)
+    if isinstance(balance_payload, str):
+        try:
+            return float(balance_payload.replace(",", "").strip())
+        except ValueError:
+            return None
+    if not isinstance(balance_payload, dict):
+        return None
+
+    candidates = [
+        balance_payload.get("available"),
+        balance_payload.get("available_balance"),
+        balance_payload.get("balance"),
+        balance_payload.get("amount"),
+        balance_payload.get("value"),
+    ]
+    for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
+        nested = balance_payload.get(nested_key)
+        if isinstance(nested, dict):
+            candidates.extend(
+                [
+                    nested.get("available"),
+                    nested.get("available_balance"),
+                    nested.get("balance"),
+                    nested.get("amount"),
+                    nested.get("value"),
+                ]
+            )
+    for value in candidates:
+        if value in (None, ""):
+            continue
+        try:
+            return float(str(value).replace(",", "").strip())
+        except ValueError:
+            continue
+    return None
+
+
+async def _build_server_status_payload() -> Dict[str, Any]:
+    """Build a normalized status payload for the MCP get_server_status tool."""
+    current_chain_id = config.POLYMARKET_CHAIN_ID if config else None
+    payload: Dict[str, Any] = {
+        "status": "connected" if polymarket_client else "disconnected",
+        "environment": config.POLYMARKET_ENV if config else "unknown",
+        "wallet_address": (config.effective_funder if config else None),
+        "network": _network_name_from_chain_id(current_chain_id),
+        "available_balance_usdc": None,
+        "chain_id": current_chain_id,
+        "endpoints": {
+            "clob_api": (config.CLOB_API_URL if config else None),
+            "gamma_api": (config.GAMMA_API_URL if config else None),
+        },
+        "authenticated": _has_authenticated_trading_access(),
+    }
+    if polymarket_client:
+        try:
+            balance_payload = await polymarket_client.get_balance()
+            available = _extract_available_balance(balance_payload)
+            if available is not None:
+                payload["available_balance_usdc"] = f"{available:.2f}"
+        except Exception as balance_error:
+            logger.warning("Failed to fetch balance for get_server_status: %s", balance_error)
+            payload["balance_error"] = str(balance_error)
+    return payload
+
+
 class StreamableHTTPASGIApp:
     """ASGI adapter for MCP Streamable HTTP transport."""
 
@@ -149,6 +229,7 @@ async def list_tools() -> list[types.Tool]:
         List of tools (conditional on authentication):
         - 8 Market Discovery tools (always available - public API)
         - 10 Market Analysis tools (always available - public API)
+        - 1 Server Status tool (always available)
         - 12 Trading tools (requires API credentials)
         - 8 Portfolio Management tools (requires API credentials)
         - 7 Real-time WebSocket tools (partial - some require auth)
@@ -158,6 +239,13 @@ async def list_tools() -> list[types.Tool]:
     # Always available - public APIs (no auth needed)
     tools.extend(market_discovery.get_tools())
     tools.extend(market_analysis.get_tools())
+    tools.append(
+        types.Tool(
+            name="get_server_status",
+            description="Return server connection/environment status and available USDC balance",
+            inputSchema={"type": "object", "properties": {}},
+        )
+    )
 
     # Only available with API credentials
     has_credentials = _has_authenticated_trading_access()
@@ -233,7 +321,14 @@ async def read_resource(uri: str) -> str:
         status_data = {
             "connected": polymarket_client is not None,
             "address": config.POLYGON_ADDRESS if config else None,
+            "funder_address": config.effective_funder if config else None,
+            "environment": config.POLYMARKET_ENV if config else "unknown",
+            "network": _network_name_from_chain_id(config.POLYMARKET_CHAIN_ID if config else None),
             "chain_id": config.POLYMARKET_CHAIN_ID if config else None,
+            "endpoints": {
+                "clob_api": config.CLOB_API_URL if config else None,
+                "gamma_api": config.GAMMA_API_URL if config else None,
+            },
             "has_api_credentials": (
                 _has_authenticated_trading_access()
             ),
@@ -291,6 +386,10 @@ async def call_tool(name: str, arguments: Dict[str, Any]) -> list[types.TextCont
     import json
 
     try:
+        if name == "get_server_status":
+            result = await _build_server_status_payload()
+            return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
+
         # Route to market discovery tools
         if name in [
             "search_markets",
@@ -429,6 +528,8 @@ async def initialize_server() -> None:
             config.effective_funder,
             config.POLYMARKET_SIGNATURE_TYPE,
         )
+        market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
+        market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
         # Initialize Polymarket client
         logger.info("Initializing Polymarket client...")
@@ -441,6 +542,7 @@ async def initialize_server() -> None:
             passphrase=config.POLYMARKET_PASSPHRASE,
             signature_type=config.POLYMARKET_SIGNATURE_TYPE,
             funder=config.effective_funder,
+            host=config.CLOB_API_URL,
         )
 
         # Test (and if necessary refresh or create) API credentials at startup.
@@ -507,14 +609,24 @@ async def initialize_server() -> None:
         logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
 
         # Report available tools based on authentication
+        static_tool_count = 8 + 10 + 1
+        realtime_count = 7 if config.WS_ENABLED else 0
+        trading_portfolio_count = 12 + 8 if _has_authenticated_trading_access() else 0
+        total_tools = static_tool_count + realtime_count + trading_portfolio_count
         if _has_authenticated_trading_access():
             logger.info("Mode: FULL (authenticated)")
             logger.info(
-                "Available tools: 45 total (8 Discovery, 10 Analysis, 12 Trading, 8 Portfolio, 7 Real-time)"
+                "Available tools: %s total (8 Discovery, 10 Analysis, 1 Server Status, 12 Trading, 8 Portfolio, %s Real-time)",
+                total_tools,
+                realtime_count,
             )
         else:
             logger.info("Mode: READ-ONLY (no API credentials)")
-            logger.info("Available tools: 25 total (8 Discovery, 10 Analysis, 7 Real-time)")
+            logger.info(
+                "Available tools: %s total (8 Discovery, 10 Analysis, 1 Server Status, %s Real-time)",
+                total_tools,
+                realtime_count,
+            )
             logger.info("Trading and Portfolio tools require API credentials")
 
         _log_docker_login_report()

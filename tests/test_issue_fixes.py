@@ -536,6 +536,7 @@ class TestCriticalRuntimeFixes:
 
             assert mock_create_client.call_count == 1
             assert mock_create_client.call_args.kwargs["api_secret"] == "legacy-passphrase"
+            assert mock_create_client.call_args.kwargs["host"] == fake_config.CLOB_API_URL
         finally:
             server_module.config = original_config
             server_module.polymarket_client = original_polymarket_client
@@ -579,6 +580,32 @@ class TestWalletConfigFlow:
         assert mock_create.call_args.kwargs["chain_id"] == fake_config.POLYMARKET_CHAIN_ID
         assert mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
         assert mock_create.call_args.kwargs["funder"] == fake_config.effective_funder
+        assert mock_create.call_args.kwargs["host"] == fake_config.CLOB_API_URL
+
+    def test_config_applies_testnet_defaults_from_environment_switch(self):
+        cfg = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+            POLYMARKET_ENV="testnet",
+        )
+
+        assert cfg.POLYMARKET_CHAIN_ID == 80002
+        assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
+        assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
+
+    def test_config_keeps_explicit_overrides_in_testnet(self):
+        cfg = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+            POLYMARKET_ENV="testnet",
+            POLYMARKET_CHAIN_ID=137,
+            CLOB_API_URL="https://custom-clob.example",
+            GAMMA_API_URL="https://custom-gamma.example",
+        )
+
+        assert cfg.POLYMARKET_CHAIN_ID == 137
+        assert cfg.CLOB_API_URL == "https://custom-clob.example"
+        assert cfg.GAMMA_API_URL == "https://custom-gamma.example"
 
 
 class TestTradingMarketIdCompatibility:
@@ -1394,6 +1421,45 @@ class TestMarketAnalysisIdentifierCompatibility:
             server_module.websocket_manager = original_websocket_manager
 
     @pytest.mark.asyncio
+    async def test_get_server_status_tool_returns_environment_and_balance(self):
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+        }
+
+        fake_config = MagicMock()
+        fake_config.POLYMARKET_ENV = "testnet"
+        fake_config.POLYMARKET_CHAIN_ID = 80002
+        fake_config.CLOB_API_URL = "https://clob-testnet.polytest.cloud"
+        fake_config.GAMMA_API_URL = "https://gcomm-api.polytest.cloud"
+        fake_config.effective_funder = "0x" + "2" * 40
+
+        fake_client = MagicMock()
+        fake_client.get_balance = AsyncMock(return_value={"available": "1500"})
+        fake_client.has_api_credentials.return_value = True
+        fake_client.has_verified_api_credentials.return_value = True
+
+        try:
+            server_module.config = fake_config
+            server_module.polymarket_client = fake_client
+
+            result = await server_module.call_tool("get_server_status", {})
+            payload = json.loads(result[0].text)
+
+            assert payload["status"] == "connected"
+            assert payload["environment"] == "testnet"
+            assert payload["network"] == "Polygon Amoy"
+            assert payload["wallet_address"] == fake_config.effective_funder
+            assert payload["available_balance_usdc"] == "1500.00"
+            assert payload["endpoints"]["clob_api"] == fake_config.CLOB_API_URL
+            assert payload["endpoints"]["gamma_api"] == fake_config.GAMMA_API_URL
+        finally:
+            server_module.config = saved["config"]
+            server_module.polymarket_client = saved["polymarket_client"]
+
+    @pytest.mark.asyncio
     async def test_initialize_server_registers_and_starts_websocket_manager(self):
         """Server init should register realtime manager and start the background loop."""
         import polymarket_mcp.server as server_module
@@ -1642,7 +1708,7 @@ class TestMarketAnalysisIdentifierCompatibility:
                 tools = await server_module.list_tools()
 
             mock_realtime.assert_not_called()
-            assert tools == []
+            assert [tool.name for tool in tools] == ["get_server_status"]
         finally:
             server_module.config = original_config
             server_module.polymarket_client = original_polymarket_client
@@ -1948,13 +2014,20 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_API_KEY = "k"
         mock_config.POLYMARKET_API_SECRET = "s"
         mock_config.POLYMARKET_PASSPHRASE = "p"
+        mock_config.POLYMARKET_ENV = "mainnet"
+        mock_config.CLOB_API_URL = "https://clob.polymarket.com"
+        mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"
 
         try:
             with (
                 patch("polymarket_mcp.server.load_config", return_value=mock_config),
-                patch("polymarket_mcp.server.create_polymarket_client", return_value=mock_client),
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                ) as mock_create,
                 patch("polymarket_mcp.server.create_safety_limits_from_config"),
                 patch("polymarket_mcp.server.get_rate_limiter"),
                 patch("polymarket_mcp.server.TradingTools"),
@@ -1962,6 +2035,7 @@ class TestEnsureValidApiCredentials:
                 await server_module.initialize_server()
 
             mock_client.ensure_valid_api_credentials.assert_awaited_once()
+            assert mock_create.call_args.kwargs["host"] == mock_config.CLOB_API_URL
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)

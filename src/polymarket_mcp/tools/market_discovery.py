@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
 
 
+def set_gamma_api_url(url: str) -> None:
+    """Update Gamma API URL at runtime from loaded configuration."""
+    global GAMMA_API_URL
+    GAMMA_API_URL = (url or GAMMA_API_URL).rstrip("/")
+
+
 def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
     """Parse market end-date to UTC-aware datetime.
 

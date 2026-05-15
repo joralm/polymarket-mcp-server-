@@ -119,6 +119,8 @@ async def load_mcp_config():
         config = load_config()
         logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
         logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
+        market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
+        market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
         # Initialize client
         client = create_polymarket_client(
@@ -130,6 +132,7 @@ async def load_mcp_config():
             passphrase=config.POLYMARKET_PASSPHRASE,
             signature_type=config.POLYMARKET_SIGNATURE_TYPE,
             funder=config.effective_funder,
+            host=config.CLOB_API_URL,
         )
         try:
             await client.ensure_valid_api_credentials()
@@ -164,8 +167,9 @@ async def dashboard_home(request: Request):
         "connected": config is not None and client is not None,
         "mode": "FULL" if _has_authenticated_trading_access() else "READ-ONLY",
         "address": config.POLYGON_ADDRESS if config else "Not configured",
+        "environment": config.POLYMARKET_ENV if config else "unknown",
         "chain_id": config.POLYMARKET_CHAIN_ID if config else None,
-        "tools_available": 45 if _has_authenticated_trading_access() else 25,
+        "tools_available": 46 if _has_authenticated_trading_access() else 26,
     }
 
     return templates.TemplateResponse(

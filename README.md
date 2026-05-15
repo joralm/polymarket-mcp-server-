@@ -7,7 +7,7 @@
 
 **Complete AI-Powered Trading Platform for Polymarket Prediction Markets**
 
-Enable Claude to autonomously trade, analyze, and manage positions on Polymarket with 45 comprehensive tools, real-time WebSocket monitoring, and enterprise-grade safety features.
+Enable Claude to autonomously trade, analyze, and manage positions on Polymarket with 46 comprehensive tools, real-time WebSocket monitoring, environment-aware routing (mainnet/testnet), and enterprise-grade safety features.
 
 ---
 
@@ -26,15 +26,16 @@ Powered by **[Claude Code](https://claude.ai/code)** from Anthropic
 
 ## ⭐ Key Features
 
-### 🎯 45 Comprehensive Tools Across 5 Categories
+### 🎯 46 Comprehensive Tools Across 6 Categories
 
 <table>
 <tr>
-<td width="20%" align="center"><b>🔍<br/>Market Discovery</b><br/>8 tools</td>
-<td width="20%" align="center"><b>📊<br/>Market Analysis</b><br/>10 tools</td>
-<td width="20%" align="center"><b>💼<br/>Trading</b><br/>12 tools</td>
-<td width="20%" align="center"><b>📈<br/>Portfolio</b><br/>8 tools</td>
-<td width="20%" align="center"><b>⚡<br/>Real-time</b><br/>7 tools</td>
+<td width="16%" align="center"><b>🔍<br/>Market Discovery</b><br/>8 tools</td>
+<td width="16%" align="center"><b>📊<br/>Market Analysis</b><br/>10 tools</td>
+<td width="16%" align="center"><b>🩺<br/>Server Status</b><br/>1 tool</td>
+<td width="16%" align="center"><b>💼<br/>Trading</b><br/>12 tools</td>
+<td width="16%" align="center"><b>📈<br/>Portfolio</b><br/>8 tools</td>
+<td width="16%" align="center"><b>⚡<br/>Real-time</b><br/>7 tools</td>
 </tr>
 </table>
 
@@ -57,6 +58,9 @@ Powered by **[Claude Code](https://claude.ai/code)** from Anthropic
 - Top holders analysis
 - Risk assessment and scoring
 - Spread calculation and monitoring
+
+#### 🩺 Server Status (1 tool)
+- `get_server_status` returns connection state, active environment (`mainnet`/`testnet`), wallet/funder address, network, endpoints, and available USDC balance.
 
 #### 💼 Trading (12 tools)
 - **Limit orders** (GTC, GTD, FOK, FAK)
@@ -107,6 +111,7 @@ Powered by **[Claude Code](https://claude.ai/code)** from Anthropic
 - ✅ **EIP-712 Signing** - Secure order signatures
 - ✅ **Auto-reconnect WebSockets** - Resilient real-time connections
 - ✅ **Comprehensive Error Handling** - User-friendly error messages
+- ✅ **Environment Switch** - Native `POLYMARKET_ENV` (`mainnet`/`testnet`) with automatic endpoint and chain routing
 - ✅ **No Mocks** - Real Polymarket API integration throughout
 - ✅ **Full Test Coverage** - Production-grade testing with real APIs
 
@@ -233,7 +238,13 @@ nano .env
 ```env
 POLYGON_PRIVATE_KEY=your_private_key_without_0x_prefix
 POLYGON_ADDRESS=0xYourPolygonAddress
+POLYMARKET_ENV=mainnet
 ```
+
+**Environment switch (recommended):**
+- `POLYMARKET_ENV=mainnet` → Chain `137`, CLOB `https://clob.polymarket.com`, Gamma `https://gamma-api.polymarket.com`
+- `POLYMARKET_ENV=testnet` → Chain `80002`, CLOB `https://clob-testnet.polytest.cloud`, Gamma `https://gcomm-api.polytest.cloud`
+- You can still override `POLYMARKET_CHAIN_ID`, `CLOB_API_URL`, and `GAMMA_API_URL` explicitly.
 
 **Supported trading flow (important):**
 - Use a wallet created/linked through the Polymarket **deposit-wallet flow** (MetaMask-linked).
@@ -315,7 +326,7 @@ MCP_TRANSPORT=stdio
 - **[Demo Video Script](DEMO_VIDEO_SCRIPT.md)** - Video tutorial scripts
 
 ### Developer Resources
-- **[Tools Reference](TOOLS_REFERENCE.md)** - Complete API documentation for all 45 tools
+- **[Tools Reference](TOOLS_REFERENCE.md)** - Complete API documentation for all 46 tools
 - **[Agent Integration Guide](AGENT_INTEGRATION_GUIDE.md)** - How to integrate with your agents
 - **[Trading Architecture](TRADING_ARCHITECTURE.md)** - System design and architecture
 - **[WebSocket Integration](WEBSOCKET_INTEGRATION.md)** - Real-time data setup
@@ -354,7 +365,7 @@ MCP_TRANSPORT=stdio
     │  └────────────┘  └──────────────────────┘   │
     │                                              │
     │  ┌──────────────────────────────────────┐   │
-    │  │  Real-time WebSocket (7 tools)       │   │
+    │  │  Server Status (1) + Real-time (7)   │   │
     │  └──────────────────────────────────────┘   │
     └──────────────┬───────────────────────────────┘
                    │
@@ -491,7 +502,7 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
 ## 📊 Project Stats
 
 - **Lines of Code**: ~10,000+ (Python)
-- **Tools**: 45 comprehensive tools
+- **Tools**: 46 comprehensive tools
 - **Test Coverage**: High (real API integration)
 - **Documentation**: Comprehensive (multiple guides)
 - **Dependencies**: Modern Python packages (MCP, httpx, websockets, eth-account)
@@ -581,7 +592,7 @@ The authors and contributors are not responsible for any financial losses incurr
 ## 📈 Roadmap
 
 ### Current Version (v0.1.0)
-- ✅ 45 comprehensive tools
+- ✅ 46 comprehensive tools
 - ✅ Real-time WebSocket monitoring
 - ✅ Safety limits and risk management
 - ✅ Complete test suite

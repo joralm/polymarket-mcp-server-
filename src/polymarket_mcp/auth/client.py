@@ -1237,6 +1237,7 @@ def create_polymarket_client(
     passphrase: Optional[str] = None,
     signature_type: int = 3,
     funder: Optional[str] = None,
+    host: str = "https://clob.polymarket.com",
 ) -> PolymarketClient:
     """
     Create PolymarketClient instance.
@@ -1250,6 +1251,7 @@ def create_polymarket_client(
         passphrase: Optional L2 API passphrase
         signature_type: Polymarket wallet signature type
         funder: Funding / deposit wallet address
+        host: CLOB API host URL
 
     Returns:
         PolymarketClient instance
@@ -1263,4 +1265,5 @@ def create_polymarket_client(
         passphrase=passphrase,
         signature_type=signature_type,
         funder=funder,
+        host=host,
     )

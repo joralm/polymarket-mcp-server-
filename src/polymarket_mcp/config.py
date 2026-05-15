@@ -3,8 +3,8 @@ Configuration management for Polymarket MCP server.
 Loads and validates environment variables with proper defaults.
 """
 
-from typing import Optional
-from pydantic import Field, field_validator
+from typing import Optional, ClassVar
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class PolymarketConfig(BaseSettings):
@@ -16,6 +16,13 @@ class PolymarketConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
     )
+
+    MAINNET_CHAIN_ID: ClassVar[int] = 137
+    TESTNET_CHAIN_ID: ClassVar[int] = 80002
+    MAINNET_CLOB_URL: ClassVar[str] = "https://clob.polymarket.com"
+    TESTNET_CLOB_URL: ClassVar[str] = "https://clob-testnet.polytest.cloud"
+    MAINNET_GAMMA_URL: ClassVar[str] = "https://gamma-api.polymarket.com"
+    TESTNET_GAMMA_URL: ClassVar[str] = "https://gcomm-api.polytest.cloud"
 
     # DEMO MODE - Run without real credentials (read-only)
     DEMO_MODE: bool = Field(
@@ -29,6 +36,10 @@ class PolymarketConfig(BaseSettings):
     POLYGON_ADDRESS: str = Field(default="", description="Polygon wallet address")
     POLYMARKET_CHAIN_ID: int = Field(
         default=137, description="Polygon chain ID (137 for mainnet, 80002 for Amoy testnet)"
+    )
+    POLYMARKET_ENV: str = Field(
+        default="mainnet",
+        description="Polymarket environment selection: mainnet or testnet",
     )
 
     # Optional L2 API Credentials (auto-created if not provided)
@@ -85,10 +96,10 @@ class PolymarketConfig(BaseSettings):
 
     # API Endpoints
     CLOB_API_URL: str = Field(
-        default="https://clob.polymarket.com", description="Polymarket CLOB API endpoint"
+        default=MAINNET_CLOB_URL, description="Polymarket CLOB API endpoint"
     )
     GAMMA_API_URL: str = Field(
-        default="https://gamma-api.polymarket.com", description="Gamma API endpoint for market data"
+        default=MAINNET_GAMMA_URL, description="Gamma API endpoint for market data"
     )
 
     # WebSocket Controls
@@ -181,6 +192,15 @@ class PolymarketConfig(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {valid_levels}")
         return v
 
+    @field_validator("POLYMARKET_ENV")
+    @classmethod
+    def validate_polymarket_env(cls, v: str) -> str:
+        """Validate Polymarket environment selection."""
+        normalized = v.strip().lower()
+        if normalized not in {"mainnet", "testnet"}:
+            raise ValueError("POLYMARKET_ENV must be either 'mainnet' or 'testnet'")
+        return normalized
+
     @field_validator("POLYMARKET_SIGNATURE_TYPE")
     @classmethod
     def validate_signature_type(cls, v: int) -> int:
@@ -203,6 +223,30 @@ class PolymarketConfig(BaseSettings):
         if len(v) != 42:
             raise ValueError("POLYMARKET_FUNDER must be 42 characters")
         return v.lower()
+
+    @model_validator(mode="after")
+    def apply_environment_defaults(self):
+        """
+        Apply endpoint/chain defaults from POLYMARKET_ENV when not explicitly set.
+
+        Explicit values from environment variables always win over inferred defaults.
+        """
+        fields_set = set(self.model_fields_set)
+        if self.POLYMARKET_ENV == "testnet":
+            if "POLYMARKET_CHAIN_ID" not in fields_set:
+                self.POLYMARKET_CHAIN_ID = self.TESTNET_CHAIN_ID
+            if "CLOB_API_URL" not in fields_set:
+                self.CLOB_API_URL = self.TESTNET_CLOB_URL
+            if "GAMMA_API_URL" not in fields_set:
+                self.GAMMA_API_URL = self.TESTNET_GAMMA_URL
+        else:
+            if "POLYMARKET_CHAIN_ID" not in fields_set:
+                self.POLYMARKET_CHAIN_ID = self.MAINNET_CHAIN_ID
+            if "CLOB_API_URL" not in fields_set:
+                self.CLOB_API_URL = self.MAINNET_CLOB_URL
+            if "GAMMA_API_URL" not in fields_set:
+                self.GAMMA_API_URL = self.MAINNET_GAMMA_URL
+        return self
 
     def has_api_credentials(self) -> bool:
         """Check if L2 API credentials are configured"""

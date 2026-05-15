@@ -48,6 +48,12 @@ Show me the top trending markets on Polymarket
 
 **Success!** You should see market data. 🎉
 
+Then run:
+```
+Use get_server_status
+```
+to confirm your environment is correct before any trading actions.
+
 ---
 
 ## 📖 What to Do Next
@@ -104,6 +110,11 @@ Show me the top trending markets on Polymarket
 ✅ Manage portfolio
 ✅ Real-time position tracking
 ⚠️ Real money - start small!
+
+### Mainnet vs Testnet
+- Set `POLYMARKET_ENV=mainnet` for production funds.
+- Set `POLYMARKET_ENV=testnet` to route automatically to Polytest endpoints (`clob-testnet.polytest.cloud` and `gcomm-api.polytest.cloud`) with Amoy (`80002`).
+- You can still override `POLYMARKET_CHAIN_ID`, `CLOB_API_URL`, and `GAMMA_API_URL` manually.
 
 **Switch modes anytime:** Just run `python setup_wizard.py` again
 
