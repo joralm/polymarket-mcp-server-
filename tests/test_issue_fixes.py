@@ -15,6 +15,7 @@ from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, 
 from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig
+from polymarket_mcp.tools.portfolio import get_portfolio_value
 from polymarket_mcp.tools.trading import TradingTools
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
@@ -718,6 +719,55 @@ class TestSDKCompatibility:
         assert balance["currency"] == "USDC"
 
     @pytest.mark.asyncio
+    async def test_get_balance_uses_available_balance_when_available_is_absent(self):
+        """Canonical balance should use available_balance when available is missing."""
+        client = self._build_client()
+
+        class AvailableBalanceOnlyClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"balance": "3.00", "available_balance": "1.25"}
+
+        client.client = AvailableBalanceOnlyClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "1.25"
+        assert balance["available"] == "1.25"
+        assert balance["available_balance"] == "1.25"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_uses_total_balance_when_available_fields_absent(self):
+        """Canonical balance should fall back to total balance if no available field exists."""
+        client = self._build_client()
+
+        class BalanceOnlyClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"balance": "2.50"}
+
+        client.client = BalanceOnlyClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "2.5"
+        assert balance["currency"] == "USDC"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_returns_zero_when_fields_missing_or_empty(self):
+        """Canonical balance should be zero when payload has no parseable balance fields."""
+        client = self._build_client()
+
+        class EmptyBalanceClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"available": "", "available_balance": None, "balance": ""}
+
+        client.client = EmptyBalanceClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "0.0"
+        assert balance["currency"] == "USDC"
+
+    @pytest.mark.asyncio
     async def test_get_positions_falls_back_to_data_api(self):
         """Client should fallback to Data API when SDK lacks get_positions()."""
         client = self._build_client()
@@ -919,6 +969,60 @@ class TestSDKCompatibility:
 
         assert exc_info.value.status_code == 403
         assert call_count == 1, "Should not retry on non-401 errors"
+
+
+class TestPortfolioBalanceHandling:
+    """Regression tests for portfolio cash-balance extraction from CLOB payloads."""
+
+    @staticmethod
+    async def _run_portfolio_value(balance_payload):
+        polymarket_client = MagicMock()
+        polymarket_client.get_balance = AsyncMock(return_value=balance_payload)
+        polymarket_client.get_orders = AsyncMock(return_value=[])
+
+        rate_limiter = MagicMock()
+        rate_limiter.acquire = AsyncMock(return_value=0.0)
+
+        config = MagicMock()
+        config.POLYGON_ADDRESS = "0x" + "1" * 40
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = []
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm):
+            result = await get_portfolio_value(
+                polymarket_client=polymarket_client,
+                rate_limiter=rate_limiter,
+                config=config,
+                include_breakdown=True,
+            )
+
+        return result[0].text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("balance_payload", "expected_cash_line"),
+        [
+            ({"available": "0.93", "balance": "0"}, "Cash Balance (USDC): $0.93"),
+            ({"available_balance": "1.10", "balance": "0"}, "Cash Balance (USDC): $1.10"),
+            ({"balance": "2.50"}, "Cash Balance (USDC): $2.50"),
+            ({}, "Cash Balance (USDC): $0.00"),
+        ],
+    )
+    async def test_get_portfolio_value_cash_balance_field_precedence(
+        self, balance_payload, expected_cash_line
+    ):
+        """Portfolio value should follow available -> available_balance -> balance -> 0 fallback."""
+        output = await self._run_portfolio_value(balance_payload)
+        assert expected_cash_line in output
 
 
 class TestMarketAnalysisIdentifierCompatibility:

@@ -8,6 +8,7 @@ Implements 8 tools for portfolio management:
 - Risk analysis (2 tools)
 """
 import logging
+import re
 from typing import Dict, Any, List, Optional, Tuple, Literal
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -47,6 +48,65 @@ class PortfolioDataCache:
 
 # Global cache instance
 _portfolio_cache = PortfolioDataCache()
+
+
+def _coerce_balance_number(value: Any) -> Optional[float]:
+    """Parse balance values from numeric strings and currency-formatted text."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        match = re.search(r"(?<![0-9.])[+-]?(?:\d+\.\d+|\d+|\.\d+)(?![0-9.])", cleaned)
+        if not match:
+            return None
+        try:
+            return float(match.group(0))
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_cash_balance(balance_data: Any) -> float:
+    """Extract spendable cash balance, preferring available fields over total balance."""
+    if not isinstance(balance_data, dict):
+        parsed = _coerce_balance_number(balance_data)
+        return parsed if parsed is not None else 0.0
+
+    available_candidates = [
+        balance_data.get("available"),
+        balance_data.get("available_balance"),
+    ]
+    total_candidates = [
+        balance_data.get("balance"),
+        balance_data.get("amount"),
+        balance_data.get("value"),
+    ]
+
+    for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
+        nested = balance_data.get(nested_key)
+        if isinstance(nested, dict):
+            available_candidates.extend(
+                [
+                    nested.get("available"),
+                    nested.get("available_balance"),
+                ]
+            )
+            total_candidates.extend(
+                [
+                    nested.get("balance"),
+                    nested.get("amount"),
+                    nested.get("value"),
+                ]
+            )
+
+    for value in available_candidates + total_candidates:
+        parsed = _coerce_balance_number(value)
+        if parsed is not None:
+            return parsed
+
+    return 0.0
 
 
 async def get_all_positions(
@@ -417,7 +477,7 @@ async def get_portfolio_value(
         # Get balance
         await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
         balance_data = await polymarket_client.get_balance()
-        cash_balance = float(balance_data.get('balance', 0))
+        cash_balance = _extract_cash_balance(balance_data)
 
         # Get all positions
         await rate_limiter.acquire(EndpointCategory.DATA_API)
