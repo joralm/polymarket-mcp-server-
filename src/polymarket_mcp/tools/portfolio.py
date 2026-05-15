@@ -11,10 +11,8 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple, Literal
 from datetime import datetime, timedelta
-from decimal import Decimal
 from collections import defaultdict
 import httpx
-import asyncio
 
 import mcp.types as types
 
@@ -109,6 +107,17 @@ def _extract_cash_balance(balance_data: Any) -> float:
     return 0.0
 
 
+def _get_portfolio_funder_address(polymarket_client, config) -> str:
+    """Return the wallet address whose balance/positions appear in the Polymarket UI."""
+    get_funder_address = getattr(polymarket_client, "get_funder_address", None)
+    if callable(get_funder_address):
+        return str(get_funder_address()).lower()
+    effective_funder = getattr(config, "effective_funder", None)
+    if effective_funder:
+        return str(effective_funder).lower()
+    return str(config.POLYGON_ADDRESS).lower()
+
+
 async def get_all_positions(
     polymarket_client,
     rate_limiter,
@@ -133,6 +142,7 @@ async def get_all_positions(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Rate limit for data API
         await rate_limiter.acquire(EndpointCategory.DATA_API)
@@ -147,7 +157,7 @@ async def get_all_positions(
             # Fetch positions using direct HTTP call to Data API
             async with httpx.AsyncClient() as client:
                 params = {
-                    "user": config.POLYGON_ADDRESS.lower()
+                    "user": portfolio_user
                 }
 
                 response = await client.get(
@@ -295,12 +305,13 @@ async def get_position_details(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Fetch position data
         await rate_limiter.acquire(EndpointCategory.DATA_API)
         async with httpx.AsyncClient() as client:
             params = {
-                "user": config.POLYGON_ADDRESS.lower(),
+                "user": portfolio_user,
                 "market": market_id
             }
 
@@ -321,10 +332,6 @@ async def get_position_details(
         position = positions[0]
         token_id = position.get('asset_id')
 
-        # Fetch market details
-        await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
-        market = await polymarket_client.get_market(market_id)
-
         # Fetch current orderbook
         await rate_limiter.acquire(EndpointCategory.MARKET_DATA)
         orderbook = await polymarket_client.get_orderbook(token_id)
@@ -335,7 +342,7 @@ async def get_position_details(
             trade_response = await client.get(
                 "https://data-api.polymarket.com/trades",
                 params={
-                    "user": config.POLYGON_ADDRESS.lower(),
+                    "user": portfolio_user,
                     "market": market_id,
                     "limit": 10
                 },
@@ -473,6 +480,7 @@ async def get_portfolio_value(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Get balance
         await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
@@ -484,7 +492,7 @@ async def get_portfolio_value(
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://data-api.polymarket.com/positions",
-                params={"user": config.POLYGON_ADDRESS.lower()},
+                params={"user": portfolio_user},
                 timeout=10.0
             )
             response.raise_for_status()
@@ -614,6 +622,7 @@ async def get_pnl_summary(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Calculate time range
         now = datetime.now()
@@ -630,7 +639,7 @@ async def get_pnl_summary(
         await rate_limiter.acquire(EndpointCategory.DATA_API)
         async with httpx.AsyncClient() as client:
             params = {
-                "user": config.POLYGON_ADDRESS.lower(),
+                "user": portfolio_user,
                 "limit": 500
             }
             if start_time:
@@ -649,7 +658,7 @@ async def get_pnl_summary(
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://data-api.polymarket.com/positions",
-                params={"user": config.POLYGON_ADDRESS.lower()},
+                params={"user": portfolio_user},
                 timeout=10.0
             )
             response.raise_for_status()
@@ -839,10 +848,11 @@ async def get_trade_history(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Build query parameters
         params = {
-            "user": config.POLYGON_ADDRESS.lower(),
+            "user": portfolio_user,
             "limit": min(limit, 500)
         }
 
@@ -955,10 +965,11 @@ async def get_activity_log(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Build query parameters
         params = {
-            "user": config.POLYGON_ADDRESS.lower(),
+            "user": portfolio_user,
             "limit": min(limit, 500)
         }
 
@@ -1047,13 +1058,14 @@ async def analyze_portfolio_risk(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Fetch all positions
         await rate_limiter.acquire(EndpointCategory.DATA_API)
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://data-api.polymarket.com/positions",
-                params={"user": config.POLYGON_ADDRESS.lower()},
+                params={"user": portfolio_user},
                 timeout=10.0
             )
             response.raise_for_status()
@@ -1285,13 +1297,14 @@ async def suggest_portfolio_actions(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Fetch all positions
         await rate_limiter.acquire(EndpointCategory.DATA_API)
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://data-api.polymarket.com/positions",
-                params={"user": config.POLYGON_ADDRESS.lower()},
+                params={"user": portfolio_user},
                 timeout=10.0
             )
             response.raise_for_status()

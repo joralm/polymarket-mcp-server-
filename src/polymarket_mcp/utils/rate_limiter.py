@@ -116,9 +116,6 @@ class TokenBucket:
 
                 if self.tokens >= tokens:
                     self.tokens -= tokens
-                    logger.debug(
-                        f"Acquired {tokens} tokens. Remaining: {self.tokens:.2f}/{self.max_tokens}"
-                    )
                     return wait_time
 
                 # Calculate wait time for sufficient tokens

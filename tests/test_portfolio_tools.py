@@ -4,8 +4,7 @@ Tests for portfolio management tools.
 Tests all 8 portfolio tools with real Polymarket data (no mocks).
 """
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta
 
 from polymarket_mcp.tools.portfolio import (
@@ -28,6 +27,7 @@ def mock_config():
     """Create mock configuration"""
     config = MagicMock(spec=PolymarketConfig)
     config.POLYGON_ADDRESS = "0x1234567890123456789012345678901234567890"
+    config.effective_funder = "0x9999999999999999999999999999999999999999"
     config.POLYMARKET_CHAIN_ID = 137
     config.CLOB_API_URL = "https://clob.polymarket.com"
     config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
@@ -71,6 +71,7 @@ def mock_polymarket_client():
     client.get_balance = AsyncMock(return_value={
         'balance': '1000.50'
     })
+    client.get_funder_address = MagicMock(return_value="0x9999999999999999999999999999999999999999")
 
     # Mock orders response
     client.get_orders = AsyncMock(return_value=[
@@ -246,6 +247,34 @@ class TestPositionTools:
         assert len(result) == 1
         assert "Portfolio Value Summary" in result[0].text
         assert "USDC" in result[0].text
+
+    @pytest.mark.asyncio
+    async def test_get_all_positions_uses_funder_wallet_for_data_api(
+        self, mock_polymarket_client, mock_rate_limiter, mock_config
+    ):
+        """Portfolio position queries must target the Polymarket funder/deposit wallet."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = []
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm):
+            await get_all_positions(
+                mock_polymarket_client,
+                mock_rate_limiter,
+                mock_config,
+            )
+
+        assert (
+            mock_http_client.get.await_args.kwargs["params"]["user"]
+            == "0x9999999999999999999999999999999999999999"
+        )
 
     @pytest.mark.asyncio
     async def test_get_pnl_summary(self, mock_polymarket_client, mock_rate_limiter, mock_config, httpx_mock):
