@@ -73,6 +73,12 @@ def _log_docker_login_report() -> None:
     """Emit a startup report showing Docker auth inputs and effective trading readiness."""
     if not config:
         return
+    demo_mode = getattr(config, "DEMO_MODE", False) is True
+    if demo_mode:
+        logger.info("DOCKER LOGIN REPORT")
+        logger.info("  DEMO_MODE=true (wallet/auth bootstrap skipped)")
+        logger.info("  FULL mode (trading enabled): False")
+        return
 
     has_api_key = bool(config.POLYMARKET_API_KEY)
     has_api_secret = bool(config.POLYMARKET_API_SECRET)
@@ -163,7 +169,11 @@ async def _build_server_status_payload() -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "status": "connected" if polymarket_client else "disconnected",
         "environment": config.POLYMARKET_ENV if config else "unknown",
-        "wallet_address": (config.effective_funder if config else None),
+        "wallet_address": (
+            None
+            if (config and (getattr(config, "DEMO_MODE", False) is True))
+            else (config.effective_funder if config else None)
+        ),
         "network": _network_name_from_chain_id(current_chain_id),
         "available_balance_usdc": None,
         "chain_id": current_chain_id,
@@ -526,53 +536,65 @@ async def initialize_server() -> None:
         for _noisy in ("httpcore", "httpx", "websockets", "asyncio", "uvicorn.access"):
             logging.getLogger(_noisy).setLevel(logging.WARNING)
 
-        logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
-        logger.debug("POLYMARKET_API_KEY is %s", "configured" if config.POLYMARKET_API_KEY else "not set")
-        logger.debug(
-            "Wallet auth config: signer=%s funder=%s signature_type=%s",
-            config.POLYGON_ADDRESS,
-            config.effective_funder,
-            config.POLYMARKET_SIGNATURE_TYPE,
-        )
+        demo_mode = getattr(config, "DEMO_MODE", False) is True
+
+        if demo_mode:
+            logger.info("Configuration loaded (DEMO_MODE=true, walletless read-only mode)")
+        else:
+            logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
+            logger.debug(
+                "POLYMARKET_API_KEY is %s",
+                "configured" if config.POLYMARKET_API_KEY else "not set",
+            )
+            logger.debug(
+                "Wallet auth config: signer=%s funder=%s signature_type=%s",
+                config.POLYGON_ADDRESS,
+                config.effective_funder,
+                config.POLYMARKET_SIGNATURE_TYPE,
+            )
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        # Initialize Polymarket client
-        logger.info("Initializing Polymarket client...")
-        polymarket_client = create_polymarket_client(
-            private_key=config.POLYGON_PRIVATE_KEY,
-            address=config.POLYGON_ADDRESS,
-            chain_id=config.POLYMARKET_CHAIN_ID,
-            api_key=config.POLYMARKET_API_KEY,
-            api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
-            passphrase=config.POLYMARKET_PASSPHRASE,
-            signature_type=config.POLYMARKET_SIGNATURE_TYPE,
-            funder=config.effective_funder,
-            host=config.CLOB_API_URL,
-        )
+        if demo_mode:
+            logger.info("DEMO_MODE=true: skipping Polymarket auth/trading client initialization")
+            polymarket_client = None
+        else:
+            # Initialize Polymarket client
+            logger.info("Initializing Polymarket client...")
+            polymarket_client = create_polymarket_client(
+                private_key=config.POLYGON_PRIVATE_KEY,
+                address=config.POLYGON_ADDRESS,
+                chain_id=config.POLYMARKET_CHAIN_ID,
+                api_key=config.POLYMARKET_API_KEY,
+                api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
+                passphrase=config.POLYMARKET_PASSPHRASE,
+                signature_type=config.POLYMARKET_SIGNATURE_TYPE,
+                funder=config.effective_funder,
+                host=config.CLOB_API_URL,
+            )
 
-        # Test (and if necessary refresh or create) API credentials at startup.
-        # This runs on every container start so that invalid/expired keys are
-        # detected and regenerated before any user request arrives.
-        try:
-            await polymarket_client.ensure_valid_api_credentials()
-            logger.debug(
-                "Post-startup auth state: has_l2=%s verified=%s",
-                polymarket_client.has_api_credentials(),
-                (
-                    polymarket_client.has_verified_api_credentials()
-                    if hasattr(polymarket_client, "has_verified_api_credentials")
-                    else polymarket_client.has_api_credentials()
-                ),
-            )
-        except Exception as e:
-            logger.warning("Could not create or validate API credentials: %s", e)
-            logger.info("Continuing in READ-ONLY mode")
-            logger.info("Available: Market Discovery (8 tools) + Market Analysis (10 tools)")
-            logger.info("Unavailable: Trading (12 tools) + Portfolio (8 tools)")
-            logger.info(
-                "To enable trading, fund your wallet or configure existing API credentials"
-            )
+            # Test (and if necessary refresh or create) API credentials at startup.
+            # This runs on every container start so that invalid/expired keys are
+            # detected and regenerated before any user request arrives.
+            try:
+                await polymarket_client.ensure_valid_api_credentials()
+                logger.debug(
+                    "Post-startup auth state: has_l2=%s verified=%s",
+                    polymarket_client.has_api_credentials(),
+                    (
+                        polymarket_client.has_verified_api_credentials()
+                        if hasattr(polymarket_client, "has_verified_api_credentials")
+                        else polymarket_client.has_api_credentials()
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Could not create or validate API credentials: %s", e)
+                logger.info("Continuing in READ-ONLY mode")
+                logger.info("Available: Market Discovery (8 tools) + Market Analysis (10 tools)")
+                logger.info("Unavailable: Trading (12 tools) + Portfolio (8 tools)")
+                logger.info(
+                    "To enable trading, fund your wallet or configure existing API credentials"
+                )
 
         # Initialize safety limits
         logger.info("Initializing safety limits...")
@@ -590,6 +612,7 @@ async def initialize_server() -> None:
             )
             logger.info("Trading tools initialized with 12 tools")
         else:
+            trading_tools = None
             logger.info("Trading tools NOT initialized (no API credentials - read-only mode)")
 
         websocket_manager = None
@@ -634,7 +657,10 @@ async def initialize_server() -> None:
                 realtime_count,
             )
         else:
-            logger.info("Mode: READ-ONLY (no API credentials)")
+            logger.info(
+                "Mode: READ-ONLY (%s)",
+                "demo mode" if demo_mode else "no API credentials",
+            )
             logger.info(
                 "Available tools: %s total (%s Discovery, %s Analysis, %s Server Status, %s Real-time)",
                 total_tools,
@@ -643,7 +669,10 @@ async def initialize_server() -> None:
                 STATUS_TOOL_COUNT,
                 realtime_count,
             )
-            logger.info("Trading and Portfolio tools require API credentials")
+            if demo_mode:
+                logger.info("Trading and Portfolio tools are disabled in DEMO_MODE")
+            else:
+                logger.info("Trading and Portfolio tools require API credentials")
 
         _log_docker_login_report()
 

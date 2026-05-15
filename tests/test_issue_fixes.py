@@ -549,6 +549,12 @@ class TestCriticalRuntimeFixes:
 class TestWalletConfigFlow:
     """Regression tests for MetaMask wallet configuration flow."""
 
+    def test_config_demo_mode_does_not_inject_wallet_defaults(self):
+        cfg = PolymarketConfig(DEMO_MODE=True)
+
+        assert cfg.POLYGON_PRIVATE_KEY == ""
+        assert cfg.POLYGON_ADDRESS == ""
+
     def test_config_rejects_non_deposit_signature_flow(self):
         with pytest.raises(ValueError, match="must be 3"):
             PolymarketConfig(
@@ -581,6 +587,23 @@ class TestWalletConfigFlow:
         assert mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
         assert mock_create.call_args.kwargs["funder"] == fake_config.effective_funder
         assert mock_create.call_args.kwargs["host"] == fake_config.CLOB_API_URL
+
+    @pytest.mark.asyncio
+    async def test_web_dashboard_demo_mode_skips_wallet_client_initialization(self):
+        import polymarket_mcp.web.app as web_app_module
+
+        fake_config = PolymarketConfig(DEMO_MODE=True)
+
+        with (
+            patch.object(web_app_module, "load_config", return_value=fake_config),
+            patch.object(web_app_module, "create_polymarket_client") as mock_create,
+            patch.object(
+                web_app_module, "create_safety_limits_from_config", return_value=MagicMock()
+            ),
+        ):
+            await web_app_module.load_mcp_config()
+
+        mock_create.assert_not_called()
 
     def test_config_applies_testnet_defaults_from_environment_switch(self):
         cfg = PolymarketConfig(
@@ -2022,6 +2045,7 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_SIGNATURE_TYPE = 3
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"
+        mock_config.DEMO_MODE = False
 
         try:
             with (
@@ -2037,6 +2061,38 @@ class TestEnsureValidApiCredentials:
 
             mock_client.ensure_valid_api_credentials.assert_awaited_once()
             assert mock_create.call_args.kwargs["host"] == mock_config.CLOB_API_URL
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_demo_mode_skips_auth_bootstrap(self):
+        """initialize_server() must skip wallet/auth bootstrap in DEMO mode."""
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        demo_config = PolymarketConfig(DEMO_MODE=True, WS_ENABLED=False)
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=demo_config),
+                patch("polymarket_mcp.server.create_polymarket_client") as mock_create,
+                patch("polymarket_mcp.server.create_safety_limits_from_config"),
+                patch("polymarket_mcp.server.get_rate_limiter"),
+            ):
+                await server_module.initialize_server()
+
+            mock_create.assert_not_called()
+            assert server_module.polymarket_client is None
+            assert server_module.trading_tools is None
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)

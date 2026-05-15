@@ -117,32 +117,40 @@ async def load_mcp_config():
     try:
         logger.info("Loading MCP configuration...")
         config = load_config()
+        demo_mode = getattr(config, "DEMO_MODE", False) is True
         logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
         logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        # Initialize client
-        client = create_polymarket_client(
-            private_key=config.POLYGON_PRIVATE_KEY,
-            address=config.POLYGON_ADDRESS,
-            chain_id=config.POLYMARKET_CHAIN_ID,
-            api_key=config.POLYMARKET_API_KEY,
-            api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
-            passphrase=config.POLYMARKET_PASSPHRASE,
-            signature_type=config.POLYMARKET_SIGNATURE_TYPE,
-            funder=config.effective_funder,
-            host=config.CLOB_API_URL,
-        )
-        try:
-            await client.ensure_valid_api_credentials()
-        except Exception as e:
-            logger.warning("Could not verify API credentials for dashboard startup: %s", e)
+        if demo_mode:
+            logger.info("DEMO_MODE=true: dashboard running without wallet/auth client initialization")
+            client = None
+        else:
+            # Initialize client
+            client = create_polymarket_client(
+                private_key=config.POLYGON_PRIVATE_KEY,
+                address=config.POLYGON_ADDRESS,
+                chain_id=config.POLYMARKET_CHAIN_ID,
+                api_key=config.POLYMARKET_API_KEY,
+                api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
+                passphrase=config.POLYMARKET_PASSPHRASE,
+                signature_type=config.POLYMARKET_SIGNATURE_TYPE,
+                funder=config.effective_funder,
+                host=config.CLOB_API_URL,
+            )
+            try:
+                await client.ensure_valid_api_credentials()
+            except Exception as e:
+                logger.warning("Could not verify API credentials for dashboard startup: %s", e)
 
         # Initialize safety limits
         safety_limits = create_safety_limits_from_config(config)
 
-        logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
+        if demo_mode:
+            logger.info("Configuration loaded (DEMO_MODE=true, wallet not required)")
+        else:
+            logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
 
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
@@ -166,7 +174,11 @@ async def dashboard_home(request: Request):
     mcp_status = {
         "connected": config is not None and client is not None,
         "mode": "FULL" if _has_authenticated_trading_access() else "READ-ONLY",
-        "address": config.POLYGON_ADDRESS if config else "Not configured",
+        "address": (
+            "Not required (DEMO_MODE=true)"
+            if (config and (getattr(config, "DEMO_MODE", False) is True))
+            else (config.POLYGON_ADDRESS if config else "Not configured")
+        ),
         "environment": config.POLYMARKET_ENV if config else "unknown",
         "chain_id": config.POLYMARKET_CHAIN_ID if config else None,
         "tools_available": 46 if _has_authenticated_trading_access() else 26,

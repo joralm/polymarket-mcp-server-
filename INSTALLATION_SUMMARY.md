@@ -17,20 +17,20 @@ Successfully implemented automated installation scripts and DEMO mode for the Po
 **Changes:**
 - Added `DEMO_MODE` boolean field to configuration
 - Modified validators to skip credential requirements when `DEMO_MODE=true`
-- Auto-populates safe demo wallet credentials in DEMO mode
+- Keeps wallet fields empty in DEMO mode (no wallet/key auto-fill)
 - Users can explore market discovery/analysis without a real wallet
 
 **Demo Credentials (auto-set):**
 ```python
-POLYGON_PRIVATE_KEY="0000000000000000000000000000000000000000000000000000000000000001"
-POLYGON_ADDRESS="0x0000000000000000000000000000000000000001"
+POLYGON_PRIVATE_KEY=""
+POLYGON_ADDRESS=""
 ```
 
 **Testing:**
 ```bash
 ✓ DEMO_MODE: True
-✓ Address: 0x0000000000000000000000000000000000000001
-✓ Private Key: Safe demo value
+✓ Address: ''
+✓ Private Key: ''
 ✓ No validation errors
 ```
 
@@ -377,8 +377,8 @@ Everything in DEMO mode PLUS:
 ```bash
 Testing DEMO MODE configuration...
 ✓ DEMO_MODE: True
-✓ Address: 0x0000000000000000000000000000000000000001
-✓ Private Key (first 10): 0000000000...
+✓ Address: ''
+✓ Private Key: ''
 ✓ DEMO mode validation works!
 ```
 
@@ -402,7 +402,7 @@ Testing DEMO MODE configuration...
 
 ### DEMO Mode Security
 
-- ✅ Uses fixed, public demo wallet (no real funds)
+- ✅ Uses no wallet/private-key defaults
 - ✅ Trading functions disabled
 - ✅ Cannot access real user wallets
 - ✅ Safe for public testing

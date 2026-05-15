@@ -250,10 +250,6 @@ REM Write .env file for demo mode
 echo # DEMO MODE - Read-only access, no wallet required
 echo DEMO_MODE=true
 echo.
-echo # Demo wallet (no real funds^)
-echo POLYGON_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001
-echo POLYGON_ADDRESS=0x0000000000000000000000000000000000000001
-echo.
 echo # Safety Limits (demo defaults^)
 echo MAX_ORDER_SIZE_USD=100
 echo MAX_TOTAL_EXPOSURE_USD=500
