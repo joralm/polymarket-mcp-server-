@@ -412,6 +412,15 @@ async def initialize_server() -> None:
         # detected and regenerated before any user request arrives.
         try:
             await polymarket_client.ensure_valid_api_credentials()
+            logger.debug(
+                "Post-startup auth state: has_l2=%s verified=%s",
+                polymarket_client.has_api_credentials(),
+                (
+                    polymarket_client.has_verified_api_credentials()
+                    if hasattr(polymarket_client, "has_verified_api_credentials")
+                    else polymarket_client.has_api_credentials()
+                ),
+            )
         except Exception as e:
             logger.warning("Could not create or validate API credentials: %s", e)
             logger.info("Continuing in READ-ONLY mode")
