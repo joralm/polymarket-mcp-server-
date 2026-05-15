@@ -129,6 +129,9 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
     """
     Extract geoblock boolean from documented/common response shapes.
 
+    Args:
+        payload: JSON-decoded response body from CLOB /geoblock endpoint.
+
     The documented field is expected to be `geoblocked`, but we also accept
     legacy/alternate boolean keys to stay resilient to payload drift.
     """
@@ -145,7 +148,6 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
         "geo_blocked",
         "is_blocked",
         "is_geoblocked",
-        "restricted",
     )
     for key in candidate_keys:
         value = payload.get(key)
@@ -189,8 +191,11 @@ async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
             return None
         logger.info("Geoblock check: %s", "blocked" if status else "allowed")
         return status
-    except (httpx.HTTPError, ValueError) as geoblock_error:
+    except httpx.HTTPError as geoblock_error:
         logger.warning("Geoblock check unavailable (%s): %s", url, geoblock_error)
+        return None
+    except ValueError as geoblock_error:
+        logger.warning("Geoblock check returned invalid JSON (%s): %s", url, geoblock_error)
         return None
 
 
