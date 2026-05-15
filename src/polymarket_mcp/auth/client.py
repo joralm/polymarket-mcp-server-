@@ -108,6 +108,8 @@ class PolymarketClient:
 
         # L2 API credentials
         self.api_creds: Optional[ApiCreds] = None
+        self._api_creds_from_config = False
+        self._zero_balance_proxy_refresh_attempted = False
         if api_key and (api_secret or passphrase):
             secret = api_secret or passphrase
             # Prefer the explicit passphrase when both values are provided, but
@@ -117,6 +119,7 @@ class PolymarketClient:
             self.api_creds = ApiCreds(
                 api_key=api_key, api_secret=secret, api_passphrase=auth_passphrase
             )
+            self._api_creds_from_config = True
 
         # Initialize CLOB client
         self.client: Optional[ClobClient] = None
@@ -627,7 +630,8 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
-            return self._fetch_balance_once()
+            balance_data = self._fetch_balance_once()
+            return self._refresh_proxy_credentials_on_zero_balance(balance_data)
         except PolyApiException as e:
             if e.status_code == 401:
                 logger.warning(
@@ -671,6 +675,33 @@ class PolymarketClient:
         """Check if L2 API credentials are available"""
         return self.api_creds is not None
 
+    def _refresh_proxy_credentials_on_zero_balance(
+        self, balance_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Handle proxy-wallet migration: refresh configured creds once if balance probes as 0."""
+        if (
+            self._api_creds_from_config
+            and not self._zero_balance_proxy_refresh_attempted
+            and self._extract_numeric_balance(balance_data) <= 0.0
+        ):
+            self._zero_balance_proxy_refresh_attempted = True
+            logger.warning(
+                "Balance probe returned 0 with configured API credentials; "
+                "re-deriving credentials for proxy-wallet mode and retrying once."
+            )
+            self._refresh_api_credentials()
+            refreshed = self._fetch_balance_once()
+            if self._extract_numeric_balance(refreshed) > 0.0:
+                logger.info("Proxy-wallet credential refresh recovered a non-zero balance.")
+            else:
+                logger.warning(
+                    "Proxy-wallet credential refresh still returned 0 balance; "
+                    "wallet may truly have no spendable USDC."
+                )
+            return refreshed
+
+        return balance_data
+
     async def ensure_valid_api_credentials(self) -> None:
         """
         Ensure that L2 API credentials are present and valid.
@@ -700,7 +731,8 @@ class PolymarketClient:
 
         logger.info("Testing existing API credentials...")
         try:
-            self._fetch_balance_once()
+            balance_probe = self._fetch_balance_once()
+            self._refresh_proxy_credentials_on_zero_balance(balance_probe)
             logger.info("API credentials verified successfully.")
         except PolyApiException as e:
             if e.status_code == 401:
@@ -737,6 +769,8 @@ class PolymarketClient:
             api_secret=new_creds.api_secret,
             api_passphrase=new_creds.api_passphrase,
         )
+        # After refresh, we should treat credentials as wallet-derived/runtime-managed.
+        self._api_creds_from_config = False
         # Push updated creds into the live ClobClient instance so subsequent
         # calls use the new key without a full re-initialization.
         self.client.set_api_creds(self.api_creds)

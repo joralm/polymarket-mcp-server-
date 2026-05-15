@@ -6,7 +6,6 @@ Tests for GitHub issue fixes (#2, #6, #10).
 - Issue #2: Market discovery must filter out closed/expired markets
 """
 
-import asyncio
 import pytest
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -975,6 +974,67 @@ class TestSDKCompatibility:
         assert exc_info.value.status_code == 403
         assert call_count == 1, "Should not retry on non-401 errors"
 
+    @pytest.mark.asyncio
+    async def test_get_balance_refreshes_proxy_credentials_once_when_zero_from_configured_creds(self):
+        """Configured legacy creds returning zero should trigger one proxy-mode refresh attempt."""
+        client = self._build_client()
+
+        call_count = 0
+        refreshed = 0
+
+        class ZeroThenValueClient:
+            def get_balance_allowance(self_, params):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return {"balance": "0", "available": "0"}
+                return {"balance": "1.93", "available": "0.93"}
+
+            def create_or_derive_api_key(self_):
+                nonlocal refreshed
+                refreshed += 1
+                return ApiCreds(
+                    api_key="proxy-refresh-key",
+                    api_secret="proxy-refresh-secret",
+                    api_passphrase="proxy-refresh-passphrase",
+                )
+
+            def set_api_creds(self_, creds):
+                pass
+
+        client.client = ZeroThenValueClient()
+        balance = await client.get_balance()
+
+        assert refreshed == 1, "Zero balance with configured creds should trigger one refresh"
+        assert call_count == 2, "Balance call should retry once after proxy refresh"
+        assert balance["balance"] == "0.93"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_does_not_refresh_on_zero_when_creds_not_from_config(self):
+        """Auto-derived creds should not loop-refresh when the wallet truly has zero balance."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+            )
+        client.api_creds = ApiCreds(
+            api_key="runtime-key",
+            api_secret="runtime-secret",
+            api_passphrase="runtime-pass",
+        )
+
+        class ZeroBalanceClient:
+            def get_balance_allowance(self_, params):
+                return {"balance": "0", "available": "0"}
+
+            def create_or_derive_api_key(self_):
+                pytest.fail("Should not refresh proxy credentials when creds were not configured")
+
+        client.client = ZeroBalanceClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "0.0"
+
 
 class TestClobClientSignatureType:
     """Regression: ClobClient must be initialized with POLY_PROXY signature type.
@@ -1007,7 +1067,7 @@ class TestClobClientSignatureType:
             self_inner._ClobClient__fee_rates = {}
 
         with patch.object(ClobClient, "__init__", fake_clob_init):
-            client = PolymarketClient(
+            PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
             )
