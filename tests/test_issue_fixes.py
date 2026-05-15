@@ -17,7 +17,7 @@ from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
 from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
-from polymarket_mcp.config import PolymarketConfig
+from polymarket_mcp.config import PolymarketConfig, load_config
 from polymarket_mcp.tools.portfolio import get_portfolio_value
 from polymarket_mcp.tools.trading import TradingTools
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
@@ -627,7 +627,7 @@ class TestWalletConfigFlow:
         assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
         assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
 
-    def test_config_requires_testnet_specific_variables(self):
+    def test_config_ignores_mainnet_variables_when_testnet_selected(self):
         cfg = PolymarketConfig(
             POLYGON_PRIVATE_KEY="0" * 64,
             POLYGON_ADDRESS="0x" + "1" * 40,
@@ -642,6 +642,47 @@ class TestWalletConfigFlow:
         assert cfg.CLOB_API_URL is None
         assert cfg.GAMMA_API_URL is None
         assert "POLYMARKET_TEST_CHAIN_ID" in (cfg.polymarket_config_error or "")
+
+    def test_load_config_reads_testnet_environment_variables(self):
+        original = {
+            key: os.environ.get(key)
+            for key in (
+                "POLYMARKET_ENV",
+                "POLYMARKET_CHAIN_ID",
+                "POLYMARKET_TEST_CHAIN_ID",
+                "CLOB_API_URL",
+                "GAMMA_API_URL",
+                "CLOB_API_TEST_URL",
+                "GAMMA_API_TEST_URL",
+                "POLYGON_PRIVATE_KEY",
+                "POLYGON_ADDRESS",
+            )
+        }
+
+        os.environ["POLYMARKET_ENV"] = "testnet"
+        os.environ.pop("POLYMARKET_CHAIN_ID", None)
+        os.environ.pop("CLOB_API_URL", None)
+        os.environ.pop("GAMMA_API_URL", None)
+        os.environ["POLYMARKET_TEST_CHAIN_ID"] = "80002"
+        os.environ["CLOB_API_TEST_URL"] = "https://clob-testnet.polytest.cloud"
+        os.environ["GAMMA_API_TEST_URL"] = "https://gcomm-api.polytest.cloud"
+        os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
+        os.environ["POLYGON_ADDRESS"] = "0x" + "1" * 40
+
+        try:
+            cfg = load_config()
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        assert cfg.polymarket_ready is True
+        assert cfg.POLYMARKET_ENV == "testnet"
+        assert cfg.POLYMARKET_CHAIN_ID == 80002
+        assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
+        assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
 
 
 class TestTradingMarketIdCompatibility:

@@ -41,7 +41,7 @@ class PolymarketConfig(BaseSettings):
     )
     POLYMARKET_ENV: Optional[str] = Field(
         default=None,
-        description="Polymarket environment selection: mainnet/prod or testnet",
+        description="Polymarket environment selection: mainnet (or prod alias) or testnet",
     )
 
     # Optional L2 API Credentials (auto-created if not provided)
@@ -383,7 +383,7 @@ class PolymarketConfig(BaseSettings):
 
 
 def get_polymarket_runtime_state(config: object) -> tuple[bool, Optional[str]]:
-    """Return whether Polymarket runtime settings are active and why not."""
+    """Return `(polymarket_ready, polymarket_config_error)` for the given config object."""
     polymarket_ready_attr = getattr(config, "polymarket_ready", None)
     if isinstance(polymarket_ready_attr, bool):
         polymarket_ready = polymarket_ready_attr
