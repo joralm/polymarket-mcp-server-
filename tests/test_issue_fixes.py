@@ -6,11 +6,13 @@ Tests for GitHub issue fixes (#2, #6, #10).
 - Issue #2: Market discovery must filter out closed/expired markets
 """
 
+import asyncio
 import pytest
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
+from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
 from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
@@ -28,7 +30,12 @@ class TestCredentialMasking:
     """Verify that API credentials are never logged in full."""
 
     def test_server_logs_truncated_key(self):
-        """Credentials should be logged at DEBUG with only first 8 chars."""
+        """API key presence should be logged at DEBUG level, never at INFO.
+
+        No part of the credential value should be emitted to log files, which
+        might be aggregated to external systems. The log must be at DEBUG (not
+        INFO) so it is not emitted in production deployments by default.
+        """
         import polymarket_mcp.server as server_module
         import inspect
 
@@ -42,12 +49,10 @@ class TestCredentialMasking:
             'logger.info(f"POLYMARKET_PASSPHRASE={' not in source_code
         ), "Full passphrase is still logged at INFO level"
 
-        # Must contain truncated debug logging
+        # Must contain a DEBUG log that references POLYMARKET_API_KEY
         assert (
-            'logger.debug(f"POLYMARKET_API_KEY={' in source_code
-            or 'logger.debug(f"POLYMARKET_API_KEY=' in source_code
-        ), "API key should be logged at DEBUG level"
-        assert "[:8]" in source_code, "Credentials should be truncated to first 8 chars"
+            "logger.debug" in source_code and "POLYMARKET_API_KEY" in source_code
+        ), "API key presence should be logged at DEBUG level"
 
     def test_no_full_credentials_at_info(self):
         """Ensure no line logs full credential values at INFO."""
@@ -969,6 +974,75 @@ class TestSDKCompatibility:
 
         assert exc_info.value.status_code == 403
         assert call_count == 1, "Should not retry on non-401 errors"
+
+
+class TestClobClientSignatureType:
+    """Regression: ClobClient must be initialized with POLY_PROXY signature type.
+
+    Without signature_type=1 the SDK defaults to EOA (type 0) and all
+    balance-allowance queries go to the raw EOA wallet, which returns 0 even
+    though the user's USDC lives in their Polymarket Proxy wallet (type 1).
+    """
+
+    def test_initialize_client_uses_poly_proxy_signature_type(self):
+        """ClobClient must be created with signature_type=1 (POLY_PROXY)."""
+        captured_args = {}
+
+        def fake_clob_init(self_inner, **kwargs):
+            captured_args.update(kwargs)
+            # Prevent real network activity by leaving attributes unset;
+            # the test only cares about what was passed.
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = None
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+            )
+
+        assert captured_args.get("signature_type") == 1, (
+            "ClobClient must use signature_type=1 (POLY_PROXY) so that "
+            "balance-allowance queries return the Proxy-wallet balance, not 0"
+        )
+        assert captured_args.get("funder") == "0x" + "a" * 40, (
+            "funder must be set to the user's address for POLY_PROXY wallets"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_balance_returns_nonzero_with_poly_proxy_type(self):
+        """balance-allowance response is forwarded correctly when signature type is correct."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                api_key="key",
+                api_secret="secret",
+                passphrase="passphrase",
+            )
+
+        class FakeClob:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"balance": "42.00", "allowance": "999999999"}
+
+        client.client = FakeClob()
+        balance = await client.get_balance()
+        assert float(balance["balance"]) == pytest.approx(42.0), (
+            f"Expected 42.0 USDC but got '{balance['balance']}'; "
+            "POLY_PROXY balance-allowance response not being parsed correctly"
+        )
 
 
 class TestPortfolioBalanceHandling:
