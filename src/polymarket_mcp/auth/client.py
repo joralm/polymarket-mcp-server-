@@ -84,7 +84,7 @@ class PolymarketClient:
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         passphrase: Optional[str] = None,
-        signature_type: int = 1,
+        signature_type: int = 3,
         funder: Optional[str] = None,
         host: str = "https://clob.polymarket.com",
     ):
@@ -115,6 +115,7 @@ class PolymarketClient:
         # L2 API credentials
         self.api_creds: Optional[ApiCreds] = None
         self._api_creds_from_config = False
+        self._api_credentials_verified = False
         self._zero_balance_proxy_refresh_attempted = False
         if api_key and (api_secret or passphrase):
             secret = api_secret or passphrase
@@ -679,6 +680,10 @@ class PolymarketClient:
         """Check if L2 API credentials are available"""
         return self.api_creds is not None
 
+    def has_verified_api_credentials(self) -> bool:
+        """Check if L2 credentials are present and were successfully verified."""
+        return self.api_creds is not None and self._api_credentials_verified
+
     def _handle_zero_balance_refresh(
         self, balance_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -738,6 +743,7 @@ class PolymarketClient:
         if not self.api_creds:
             logger.info("No API credentials found. Attempting to create...")
             await self.create_api_credentials()
+            self._api_credentials_verified = True
             logger.info("API credentials created successfully!")
             return
 
@@ -745,6 +751,7 @@ class PolymarketClient:
         try:
             balance_probe = self._fetch_balance_once()
             verified_probe = self._handle_zero_balance_refresh(balance_probe)
+            self._api_credentials_verified = True
             if self._extract_numeric_balance(verified_probe) > 0.0:
                 logger.info("API credentials verified successfully.")
             else:
@@ -756,10 +763,19 @@ class PolymarketClient:
                     self.funder_address,
                 )
         except PolyApiException as e:
+            self._api_credentials_verified = False
             if e.status_code == 401:
                 logger.warning("API credentials rejected (HTTP 401) — refreshing credentials...")
                 self._refresh_api_credentials()
-                logger.info("API credentials refreshed successfully.")
+                post_refresh_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
+                self._api_credentials_verified = True
+                if self._extract_numeric_balance(post_refresh_probe) > 0.0:
+                    logger.info("API credentials refreshed and verified successfully.")
+                else:
+                    logger.warning(
+                        "API credentials refreshed successfully, but spendable USDC is still 0 for funder %s.",
+                        self.funder_address,
+                    )
             else:
                 logger.warning(
                     "API credential probe returned an unexpected error (%s). "
@@ -767,6 +783,7 @@ class PolymarketClient:
                     e,
                 )
         except Exception as e:
+            self._api_credentials_verified = False
             logger.warning(
                 "Could not verify API credentials at startup (%s). "
                 "Credentials may still be valid; continuing startup.",
@@ -804,6 +821,7 @@ class PolymarketClient:
             api_secret=new_creds.api_secret,
             api_passphrase=new_creds.api_passphrase,
         )
+        self._api_credentials_verified = False
         # After refresh, treat credentials as wallet-derived/runtime-managed.
         # `_zero_balance_proxy_refresh_attempted` remains the one-shot guard
         # that prevents repeated refresh loops on truly zero-balance wallets.
@@ -851,7 +869,7 @@ def create_polymarket_client(
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
     passphrase: Optional[str] = None,
-    signature_type: int = 1,
+    signature_type: int = 3,
     funder: Optional[str] = None,
 ) -> PolymarketClient:
     """

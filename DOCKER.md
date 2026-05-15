@@ -116,6 +116,83 @@ REQUIRE_CONFIRMATION_ABOVE_USD=100
 - Social-login-only accounts can be blocked from placing orders.
 - `RELAYER_API_KEY` / `RELAYER_API_KEY_ADDRESS` are not consumed by this server.
 
+### MetaMask + Funder/Proxy Variables (Detailed)
+
+If trading/portfolio shows `0` while Polymarket UI shows funds, the issue is almost always
+**wallet role mapping** (`POLYGON_ADDRESS` signer vs `POLYMARKET_FUNDER` deposit wallet) or
+wrong `POLYMARKET_SIGNATURE_TYPE`.
+
+Use this exact checklist:
+
+#### 1) `POLYGON_PRIVATE_KEY` (signer private key)
+- Open MetaMask → account menu (top-right) → **Account details** / **Export private key**.
+- Export the private key for the account that signs transactions.
+- Put it in `.env` (without quotes). Both with/without `0x` are accepted by this project.
+- Example:
+  ```env
+  POLYGON_PRIVATE_KEY=abc123...64hex...
+  ```
+
+#### 2) `POLYGON_ADDRESS` (signer EOA address)
+- In MetaMask, copy the current account address (starts with `0x`).
+- This must match the private key above.
+- Example:
+  ```env
+  POLYGON_ADDRESS=0xYourMetaMaskEOA
+  ```
+
+#### 3) `POLYMARKET_FUNDER` (deposit/proxy wallet used in Polymarket UI)
+- Open Polymarket and go to your wallet/deposit section (the address where your USDC/positions appear).
+- Copy that **deposit/funder** address.
+- If UI balance is under a different address than your MetaMask signer, set it here.
+- If signer and UI wallet are the same, you may leave empty (it falls back to `POLYGON_ADDRESS`).
+- Example:
+  ```env
+  POLYMARKET_FUNDER=0xYourPolymarketDepositWallet
+  ```
+
+#### 4) `POLYMARKET_SIGNATURE_TYPE` (auth mode)
+- Use:
+  - `3` for current MetaMask + deposit-wallet (`POLY_1271`) setups.
+  - `1` for legacy proxy setups.
+  - `0` for direct EOA flows.
+  - `2` for Gnosis Safe.
+- This project now defaults Docker to `3`.
+- Example:
+  ```env
+  POLYMARKET_SIGNATURE_TYPE=3
+  ```
+
+#### 5) API credentials (`POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_PASSPHRASE`)
+- Option A (recommended): leave empty on first start and let server derive automatically.
+- Option B: create manually in Polymarket UI (Settings → API) and paste values.
+- After auto-generation, copy credentials from logs and persist in `.env`.
+
+#### 6) Enable debug logs to troubleshoot auth mapping
+- Set:
+  ```env
+  LOG_LEVEL=DEBUG
+  ```
+- Restart container and inspect logs:
+  ```bash
+  docker compose down && docker compose up -d
+  docker compose logs -f polymarket-mcp
+  ```
+- You should see wallet-auth diagnostics including signer/funder/signature_type.
+
+#### 7) Known-good MetaMask template
+```env
+DEMO_MODE=false
+POLYGON_PRIVATE_KEY=<metamask_private_key>
+POLYGON_ADDRESS=<metamask_eoa_address>
+POLYMARKET_FUNDER=<polymarket_deposit_wallet_address>
+POLYMARKET_SIGNATURE_TYPE=3
+POLYMARKET_API_KEY=
+POLYMARKET_API_SECRET=
+POLYMARKET_PASSPHRASE=
+LOG_LEVEL=DEBUG
+```
+
 ## Auto-Generated API Credentials
 
 If `POLYMARKET_API_KEY` and `POLYMARKET_PASSPHRASE` are not set in your `.env` / docker-compose

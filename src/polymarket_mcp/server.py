@@ -41,7 +41,7 @@ from .tools import (
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("polymarket_mcp.server")
 
 # Global instances
 server = Server("polymarket-trading")
@@ -51,6 +51,16 @@ safety_limits: Optional[SafetyLimits] = None
 rate_limiter = None
 trading_tools: Optional[TradingTools] = None
 websocket_manager: Optional[WebSocketManager] = None
+
+
+def _has_authenticated_trading_access() -> bool:
+    """Return True only when API credentials are present and verified."""
+    if not polymarket_client:
+        return False
+    has_verified = getattr(polymarket_client, "has_verified_api_credentials", None)
+    if callable(has_verified):
+        return bool(has_verified())
+    return bool(polymarket_client.has_api_credentials())
 
 
 class StreamableHTTPASGIApp:
@@ -114,7 +124,7 @@ async def list_tools() -> list[types.Tool]:
     tools.extend(market_analysis.get_tools())
 
     # Only available with API credentials
-    has_credentials = polymarket_client and polymarket_client.has_api_credentials()
+    has_credentials = _has_authenticated_trading_access()
 
     if has_credentials:
         # Trading tools (require L2 auth)
@@ -189,7 +199,7 @@ async def read_resource(uri: str) -> str:
             "address": config.POLYGON_ADDRESS if config else None,
             "chain_id": config.POLYMARKET_CHAIN_ID if config else None,
             "has_api_credentials": (
-                polymarket_client.has_api_credentials() if polymarket_client else False
+                _has_authenticated_trading_access()
             ),
             "server_version": "0.1.0",
         }
@@ -369,6 +379,7 @@ async def initialize_server() -> None:
         # Set log level for polymarket_mcp only; leave root at INFO so
         # third-party libraries (httpcore, httpx, websockets, …) stay quiet.
         logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
+        logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
         # Suppress noisy low-level loggers that spam at DEBUG even when the
         # application itself is at INFO.
         for _noisy in ("httpcore", "httpx", "websockets", "asyncio", "uvicorn.access"):
@@ -376,6 +387,12 @@ async def initialize_server() -> None:
 
         logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
         logger.debug("POLYMARKET_API_KEY is %s", "configured" if config.POLYMARKET_API_KEY else "not set")
+        logger.debug(
+            "Wallet auth config: signer=%s funder=%s signature_type=%s",
+            config.POLYGON_ADDRESS,
+            config.effective_funder,
+            config.POLYMARKET_SIGNATURE_TYPE,
+        )
 
         # Initialize Polymarket client
         logger.info("Initializing Polymarket client...")
@@ -413,7 +430,7 @@ async def initialize_server() -> None:
         logger.info("Rate limiter initialized")
 
         # Initialize trading tools (only if authenticated)
-        if polymarket_client.has_api_credentials():
+        if _has_authenticated_trading_access():
             logger.info("Initializing trading tools...")
             trading_tools = TradingTools(
                 client=polymarket_client, safety_limits=safety_limits, config=config
@@ -445,7 +462,7 @@ async def initialize_server() -> None:
         logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
 
         # Report available tools based on authentication
-        if polymarket_client.has_api_credentials():
+        if _has_authenticated_trading_access():
             logger.info("Mode: FULL (authenticated)")
             logger.info(
                 "Available tools: 45 total (8 Discovery, 10 Analysis, 12 Trading, 8 Portfolio, 7 Real-time)"

@@ -1116,8 +1116,8 @@ class TestClobClientSignatureType:
     queries target the wrong wallet and diverge from the Polymarket UI.
     """
 
-    def test_initialize_client_uses_poly_proxy_signature_type(self):
-        """ClobClient must be created with signature_type=1 (POLY_PROXY)."""
+    def test_initialize_client_uses_deposit_wallet_signature_type_by_default(self):
+        """ClobClient defaults to signature_type=3 for MetaMask deposit-wallet flow."""
         captured_args = {}
 
         def fake_clob_init(self_inner, **kwargs):
@@ -1145,12 +1145,12 @@ class TestClobClientSignatureType:
                 address="0x" + "a" * 40,
             )
 
-        assert captured_args.get("signature_type") == 1, (
-            "ClobClient must use signature_type=1 (POLY_PROXY) so that "
-            "balance-allowance queries return the Proxy-wallet balance, not 0"
+        assert captured_args.get("signature_type") == 3, (
+            "ClobClient default signature_type should be 3 (POLY_1271/deposit wallet) "
+            "for current MetaMask deposit-wallet API flows"
         )
         assert captured_args.get("funder") == "0x" + "a" * 40, (
-            "funder must be set to the user's address for POLY_PROXY wallets"
+            "funder must default to the user's signer address when POLYMARKET_FUNDER is not provided"
         )
 
     def test_initialize_client_accepts_distinct_funder_and_signature_type(self):
@@ -1810,6 +1810,7 @@ class TestEnsureValidApiCredentials:
 
         mock_probe.assert_called_once()
         mock_refresh.assert_not_called()
+        assert client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
     async def test_stale_creds_401_triggers_refresh(self):
@@ -1824,7 +1825,7 @@ class TestEnsureValidApiCredentials:
         exc_401 = PolyApiException(resp=mock_resp)
 
         with (
-            patch.object(client, "_fetch_balance_once", side_effect=exc_401),
+            patch.object(client, "_fetch_balance_once", side_effect=[exc_401, {"balance": "10.0"}]),
             patch.object(client, "_refresh_api_credentials") as mock_refresh,
         ):
             await client.ensure_valid_api_credentials()
@@ -1864,6 +1865,7 @@ class TestEnsureValidApiCredentials:
             await client.ensure_valid_api_credentials()
 
         mock_refresh.assert_not_called()
+        assert not client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
     async def test_initialize_server_calls_ensure_valid(self):
@@ -1909,3 +1911,37 @@ class TestEnsureValidApiCredentials:
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)
+
+
+class TestVerifiedCredentialGating:
+    """Trading tools should require verified (not just present) API credentials."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_disables_trading_when_creds_not_verified(self):
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "polymarket_client": server_module.polymarket_client,
+            "config": server_module.config,
+        }
+
+        fake_client = MagicMock()
+        fake_client.has_api_credentials.return_value = True
+        fake_client.has_verified_api_credentials.return_value = False
+
+        fake_config = MagicMock()
+        fake_config.WS_ENABLED = False
+
+        try:
+            server_module.polymarket_client = fake_client
+            server_module.config = fake_config
+
+            tools = await server_module.list_tools()
+            tool_names = {tool.name for tool in tools}
+
+            assert "place_order" not in tool_names
+            assert "get_portfolio_value" not in tool_names
+            assert "search_markets" in tool_names
+        finally:
+            server_module.polymarket_client = saved["polymarket_client"]
+            server_module.config = saved["config"]

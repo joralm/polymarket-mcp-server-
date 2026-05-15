@@ -43,7 +43,7 @@ class PolymarketConfig(BaseSettings):
         default=None, description="API key name/identifier"
     )
     POLYMARKET_SIGNATURE_TYPE: int = Field(
-        default=1,
+        default=3,
         description=(
             "Wallet signature type for CLOB auth: 0=EOA, 1=POLY_PROXY, "
             "2=GNOSIS_SAFE, 3=POLY_1271/deposit wallet"
