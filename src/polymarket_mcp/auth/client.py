@@ -699,7 +699,9 @@ class PolymarketClient:
                 "Balance probe returned 0 with configured API credentials; "
                 "re-deriving credentials for proxy-wallet mode and retrying once."
             )
-            self._refresh_api_credentials()
+            self._refresh_api_credentials(
+                reason="Zero balance detected — re-deriving proxy-wallet API credentials"
+            )
             refreshed = self._fetch_balance_once()
             if self._extract_numeric_balance(refreshed) > 0.0:
                 logger.info("Proxy-wallet credential refresh recovered a non-zero balance.")
@@ -762,17 +764,31 @@ class PolymarketClient:
                 e,
             )
 
-    def _refresh_api_credentials(self) -> None:
+    def _refresh_api_credentials(
+        self,
+        reason: str = "HTTP 401 received — existing API credentials were stale or invalid",
+    ) -> bool:
         """
         Re-derive L2 API credentials from the wallet private key and update the client.
 
         Called automatically when an authenticated request returns HTTP 401 to recover
         from stale or expired API keys without requiring a server restart.
 
+        Args:
+            reason: Human-readable description of why the refresh was triggered, used in
+                the "NEW CREDENTIALS GENERATED" banner.  Only shown when the derived key
+                differs from the previously-configured key.
+
+        Returns:
+            True if the derived credentials differ from the previous ones (i.e. a
+            genuinely new key was issued), False if the same key was returned
+            deterministically (meaning the existing credentials were already correct).
+
         Raises:
             Exception: If credential derivation fails.
         """
         logger.info("Refreshing API credentials via create_or_derive_api_key()...")
+        old_api_key = self.api_creds.api_key if self.api_creds else None
         new_creds = self.client.create_or_derive_api_key()
         self.api_creds = ApiCreds(
             api_key=new_creds.api_key,
@@ -786,12 +802,25 @@ class PolymarketClient:
         # Push updated creds into the live ClobClient instance so subsequent
         # calls use the new key without a full re-initialization.
         self.client.set_api_creds(self.api_creds)
-        _log_new_credentials(
-            api_key=self.api_creds.api_key,
-            api_secret=self.api_creds.api_secret,
-            passphrase=self.api_creds.api_passphrase,
-            reason="HTTP 401 received — existing API credentials were stale or invalid",
-        )
+
+        credentials_changed = old_api_key is None or new_creds.api_key != old_api_key
+        if credentials_changed:
+            # Only emit the noisy banner when the key genuinely changed so that
+            # wallets with zero USDC balance don't spam "NEW CREDENTIALS GENERATED"
+            # on every container restart (the SDK deterministically re-derives the
+            # same key, so nothing actually changed).
+            _log_new_credentials(
+                api_key=self.api_creds.api_key,
+                api_secret=self.api_creds.api_secret,
+                passphrase=self.api_creds.api_passphrase,
+                reason=reason,
+            )
+        else:
+            logger.info(
+                "Credential re-derivation returned the same API key — "
+                "existing credentials are already correct, no update needed."
+            )
+        return credentials_changed
 
     def get_address(self) -> str:
         """Get signer wallet address (EOA)."""
