@@ -240,7 +240,7 @@ class PolymarketConfig(BaseSettings):
 
     @field_validator("POLYMARKET_CHAIN_ID", "POLYMARKET_TEST_CHAIN_ID", mode="before")
     @classmethod
-    def normalize_optional_chain_id(cls, v):
+    def normalize_optional_chain_id(cls, v: object):
         """Treat empty chain IDs as missing."""
         if v in (None, ""):
             return None
@@ -380,6 +380,28 @@ class PolymarketConfig(BaseSettings):
     def polymarket_config_error(self) -> Optional[str]:
         """Reason why Polymarket runtime settings were not activated."""
         return self._polymarket_config_error
+
+
+def get_polymarket_runtime_state(config: object) -> tuple[bool, Optional[str]]:
+    """Return whether Polymarket runtime settings are active and why not."""
+    polymarket_ready_attr = getattr(config, "polymarket_ready", None)
+    if isinstance(polymarket_ready_attr, bool):
+        polymarket_ready = polymarket_ready_attr
+    else:
+        polymarket_ready = all(
+            (
+                getattr(config, "POLYMARKET_ENV", None),
+                getattr(config, "POLYMARKET_CHAIN_ID", None),
+                getattr(config, "CLOB_API_URL", None),
+                getattr(config, "GAMMA_API_URL", None),
+            )
+        )
+
+    polymarket_config_error = getattr(config, "polymarket_config_error", None)
+    if not isinstance(polymarket_config_error, str):
+        polymarket_config_error = None
+
+    return polymarket_ready, polymarket_config_error
 
 
 def load_config() -> PolymarketConfig:

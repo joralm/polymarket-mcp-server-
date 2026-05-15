@@ -8,6 +8,7 @@ Tests for GitHub issue fixes (#2, #6, #10).
 
 import pytest
 import json
+import os
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
@@ -549,6 +550,12 @@ class TestCriticalRuntimeFixes:
 
 class TestWalletConfigFlow:
     """Regression tests for MetaMask wallet configuration flow."""
+
+    def test_test_fixture_sets_mainnet_env_defaults(self):
+        assert os.environ.get("POLYMARKET_ENV") == "mainnet"
+        assert os.environ.get("POLYMARKET_CHAIN_ID") == "137"
+        assert os.environ.get("CLOB_API_URL") == "https://clob.polymarket.com"
+        assert os.environ.get("GAMMA_API_URL") == "https://gamma-api.polymarket.com"
 
     def test_config_demo_mode_does_not_inject_wallet_defaults(self):
         cfg = PolymarketConfig(DEMO_MODE=True)

@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route, Router
 import uvicorn
 
-from .config import load_config, PolymarketConfig
+from .config import load_config, PolymarketConfig, get_polymarket_runtime_state
 from .auth import PolymarketClient, create_polymarket_client
 from .utils import (
     get_rate_limiter,
@@ -537,21 +537,7 @@ async def initialize_server() -> None:
             logging.getLogger(_noisy).setLevel(logging.WARNING)
 
         demo_mode = getattr(config, "DEMO_MODE", False) is True
-        polymarket_ready_attr = getattr(config, "polymarket_ready", None)
-        if isinstance(polymarket_ready_attr, bool):
-            polymarket_ready = polymarket_ready_attr
-        else:
-            polymarket_ready = all(
-                (
-                    getattr(config, "POLYMARKET_ENV", None),
-                    getattr(config, "POLYMARKET_CHAIN_ID", None),
-                    getattr(config, "CLOB_API_URL", None),
-                    getattr(config, "GAMMA_API_URL", None),
-                )
-            )
-        polymarket_config_error = getattr(config, "polymarket_config_error", None)
-        if not isinstance(polymarket_config_error, str):
-            polymarket_config_error = None
+        polymarket_ready, polymarket_config_error = get_polymarket_runtime_state(config)
 
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)

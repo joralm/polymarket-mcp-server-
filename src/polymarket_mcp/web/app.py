@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 import uvicorn
 from pydantic import BaseModel
 
-from ..config import load_config, PolymarketConfig
+from ..config import load_config, PolymarketConfig, get_polymarket_runtime_state
 from ..auth import create_polymarket_client, PolymarketClient
 from ..utils import get_rate_limiter, create_safety_limits_from_config, SafetyLimits
 from ..tools import market_discovery, market_analysis
@@ -118,21 +118,7 @@ async def load_mcp_config():
         logger.info("Loading MCP configuration...")
         config = load_config()
         demo_mode = getattr(config, "DEMO_MODE", False) is True
-        polymarket_ready_attr = getattr(config, "polymarket_ready", None)
-        if isinstance(polymarket_ready_attr, bool):
-            polymarket_ready = polymarket_ready_attr
-        else:
-            polymarket_ready = all(
-                (
-                    getattr(config, "POLYMARKET_ENV", None),
-                    getattr(config, "POLYMARKET_CHAIN_ID", None),
-                    getattr(config, "CLOB_API_URL", None),
-                    getattr(config, "GAMMA_API_URL", None),
-                )
-            )
-        polymarket_config_error = getattr(config, "polymarket_config_error", None)
-        if not isinstance(polymarket_config_error, str):
-            polymarket_config_error = None
+        polymarket_ready, polymarket_config_error = get_polymarket_runtime_state(config)
         logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
         logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
