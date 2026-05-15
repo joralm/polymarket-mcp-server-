@@ -997,9 +997,7 @@ class TestPortfolioBalanceHandling:
         async_client_cm.__aenter__.return_value = mock_http_client
         async_client_cm.__aexit__.return_value = None
 
-        with patch(
-            "polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm
-        ):
+        with patch("polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm):
             result = await get_portfolio_value(
                 polymarket_client=polymarket_client,
                 rate_limiter=rate_limiter,
