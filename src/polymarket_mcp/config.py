@@ -383,7 +383,16 @@ class PolymarketConfig(BaseSettings):
 
 
 def get_polymarket_runtime_state(config: object) -> tuple[bool, Optional[str]]:
-    """Return `(polymarket_ready, polymarket_config_error)` for the given config object."""
+    """Return runtime readiness for a config-like object.
+
+    Args:
+        config: Config instance or mock exposing Polymarket readiness/error attributes.
+
+    Returns:
+        Tuple `(polymarket_ready, polymarket_config_error)` where the first value indicates
+        whether the selected Polymarket environment is fully configured and the second value
+        contains the reason initialization was skipped when it is not.
+    """
     polymarket_ready_attr = getattr(config, "polymarket_ready", None)
     if isinstance(polymarket_ready_attr, bool):
         polymarket_ready = polymarket_ready_attr
