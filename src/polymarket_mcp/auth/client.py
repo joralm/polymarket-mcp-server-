@@ -443,6 +443,28 @@ class PolymarketClient:
                     "Polymarket rejected this maker address for trading. "
                     "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
+            if self._is_signer_api_key_mismatch_error(e):
+                logger.warning(
+                    "Order signer/API-key mismatch detected; re-deriving API credentials and retrying once."
+                )
+                self._refresh_api_credentials(
+                    reason=(
+                        "Order signer mismatch detected — configured API key belongs to a "
+                        "different wallet and was replaced automatically"
+                    )
+                )
+                order_response = self.client.create_and_post_order(
+                    order_args, order_type=order_type_enum
+                )
+                logger.info(
+                    "Order posted after signer/API-key credential refresh: %s %s @ %s (token: %s, order_id: %s)",
+                    side,
+                    size,
+                    price,
+                    token_id,
+                    order_response.get("orderID") if isinstance(order_response, dict) else None,
+                )
+                return order_response
             logger.error(f"Failed to post order: {e}")
             raise
         except Exception as e:
@@ -552,6 +574,25 @@ class PolymarketClient:
                     "Polymarket rejected this maker address for trading. "
                     "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
+            if self._is_signer_api_key_mismatch_error(e):
+                logger.warning(
+                    "Market-order signer/API-key mismatch detected; re-deriving API credentials and retrying once."
+                )
+                self._refresh_api_credentials(
+                    reason=(
+                        "Order signer mismatch detected — configured API key belongs to a "
+                        "different wallet and was replaced automatically"
+                    )
+                )
+                order_response = self.client.create_and_post_market_order(order_args)
+                logger.info(
+                    "Market order posted after signer/API-key credential refresh: %s $%.4f (token: %s, order_id: %s)",
+                    side.upper(),
+                    amount,
+                    token_id,
+                    order_response.get("orderID") if isinstance(order_response, dict) else None,
+                )
+                return order_response
             logger.error("Failed to post market order: %s", e)
             raise
         except Exception as e:
@@ -897,6 +938,14 @@ class PolymarketClient:
             if isinstance(nested, dict) and any(nested.get(key) is not None for key in direct_keys):
                 return True
         return False
+
+    @staticmethod
+    def _is_signer_api_key_mismatch_error(exc: PolyApiException) -> bool:
+        """Return True when CLOB reports API key wallet does not match order signer."""
+        if exc.status_code != 400:
+            return False
+        error_text = str(exc).lower()
+        return "order signer address has to be the address of the api key" in error_text
 
     def _handle_zero_balance_refresh(
         self, balance_data: Dict[str, Any]

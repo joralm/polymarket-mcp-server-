@@ -712,6 +712,33 @@ class TestSDKCompatibility:
         assert "maker address" in error_message
 
     @pytest.mark.asyncio
+    async def test_post_order_refreshes_and_retries_when_signer_api_key_mismatch(self):
+        client = self._build_client()
+
+        mismatch_resp = MagicMock()
+        mismatch_resp.status_code = 400
+        mismatch_resp.json.return_value = {
+            "error": "the order signer address has to be the address of the API KEY"
+        }
+
+        client.client = MagicMock()
+        client.client.create_and_post_order.side_effect = [
+            PolyApiException(resp=mismatch_resp),
+            {"orderID": "ord-1", "status": "live"},
+        ]
+        with patch.object(client, "_refresh_api_credentials") as mock_refresh:
+            response = await client.post_order(
+                token_id="123",
+                price=0.5,
+                size=1,
+                side="BUY",
+            )
+
+        mock_refresh.assert_called_once()
+        assert client.client.create_and_post_order.call_count == 2
+        assert response["orderID"] == "ord-1"
+
+    @pytest.mark.asyncio
     async def test_get_balance_falls_back_to_get_balance_allowance(self):
         """Client should support SDKs that only expose get_balance_allowance()."""
         client = self._build_client()
