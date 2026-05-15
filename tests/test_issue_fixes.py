@@ -558,6 +558,8 @@ class TestWalletConfigFlow:
         assert mock_create.call_args.kwargs["private_key"] == fake_config.POLYGON_PRIVATE_KEY
         assert mock_create.call_args.kwargs["address"] == fake_config.POLYGON_ADDRESS
         assert mock_create.call_args.kwargs["chain_id"] == fake_config.POLYMARKET_CHAIN_ID
+        assert mock_create.call_args.kwargs["signature_type"] == fake_config.POLYMARKET_SIGNATURE_TYPE
+        assert mock_create.call_args.kwargs["funder"] == fake_config.effective_funder
 
 
 class TestTradingMarketIdCompatibility:
@@ -637,6 +639,29 @@ class TestSDKCompatibility:
         class LegacyBalanceClient:
             def get_balance(self, address):
                 assert address == client.address
+                return {"balance": "42.5"}
+
+        client.client = LegacyBalanceClient()
+        balance = await client.get_balance()
+        assert balance["balance"] == "42.5"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_legacy_method_uses_funder_address_when_distinct(self):
+        """Legacy balance SDK calls must query the funding/deposit wallet, not signer EOA."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                funder="0x" + "2" * 40,
+                signature_type=3,
+                api_key="test-api-key",
+                api_secret="test-api-secret",
+                passphrase="test-api-passphrase",
+            )
+
+        class LegacyBalanceClient:
+            def get_balance(self, address):
+                assert address == "0x" + "2" * 40
                 return {"balance": "42.5"}
 
         client.client = LegacyBalanceClient()
@@ -796,7 +821,42 @@ class TestSDKCompatibility:
             positions = await client.get_positions()
 
         assert positions == [{"market": "m1", "size": "10"}]
-        assert mock_http_client.get.await_args.kwargs["params"]["user"] == client.address
+        assert mock_http_client.get.await_args.kwargs["params"]["user"] == client.funder_address
+
+    @pytest.mark.asyncio
+    async def test_get_positions_uses_configured_funder_address(self):
+        """Data API position queries must use funder/deposit wallet, not signer EOA."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                funder="0x" + "2" * 40,
+                signature_type=3,
+                api_key="test-api-key",
+                api_secret="test-api-secret",
+                passphrase="test-api-passphrase",
+            )
+
+        class PositionsMissingClient:
+            pass
+
+        client.client = PositionsMissingClient()
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"market": "m1", "size": "10"}]
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.auth.client.httpx.AsyncClient", return_value=async_client_cm):
+            await client.get_positions()
+
+        assert mock_http_client.get.await_args.kwargs["params"]["user"] == "0x" + "2" * 40
 
     @pytest.mark.asyncio
     async def test_get_orderbook_normalizes_orderbooksummary_object(self):
@@ -1039,11 +1099,10 @@ class TestSDKCompatibility:
 
 
 class TestClobClientSignatureType:
-    """Regression: ClobClient must be initialized with POLY_PROXY signature type.
+    """Regression: ClobClient must be initialized with explicit wallet auth config.
 
-    Without signature_type=1 the SDK defaults to EOA (type 0) and all
-    balance-allowance queries go to the raw EOA wallet, which returns 0 even
-    though the user's USDC lives in their Polymarket Proxy wallet (type 1).
+    Without the right signature type / funder combination, balance and position
+    queries target the wrong wallet and diverge from the Polymarket UI.
     """
 
     def test_initialize_client_uses_poly_proxy_signature_type(self):
@@ -1082,6 +1141,37 @@ class TestClobClientSignatureType:
         assert captured_args.get("funder") == "0x" + "a" * 40, (
             "funder must be set to the user's address for POLY_PROXY wallets"
         )
+
+    def test_initialize_client_accepts_distinct_funder_and_signature_type(self):
+        """New deposit-wallet flows must pass explicit funder + signature_type through."""
+        captured_args = {}
+
+        def fake_clob_init(self_inner, **kwargs):
+            captured_args.update(kwargs)
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = None
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                funder="0x" + "b" * 40,
+                signature_type=3,
+            )
+
+        assert captured_args.get("signature_type") == 3
+        assert captured_args.get("funder") == "0x" + "b" * 40
 
     @pytest.mark.asyncio
     async def test_get_balance_returns_nonzero_with_poly_proxy_type(self):
@@ -1160,6 +1250,41 @@ class TestPortfolioBalanceHandling:
         """Portfolio value should follow available -> available_balance -> balance -> 0 fallback."""
         output = await self._run_portfolio_value(balance_payload)
         assert expected_cash_line in output
+
+    @pytest.mark.asyncio
+    async def test_get_portfolio_value_uses_funder_wallet_for_positions(self):
+        """Portfolio positions must be queried for the Polymarket UI funder/deposit wallet."""
+        polymarket_client = MagicMock()
+        polymarket_client.get_balance = AsyncMock(return_value={"balance": "0"})
+        polymarket_client.get_orders = AsyncMock(return_value=[])
+        polymarket_client.get_funder_address = MagicMock(return_value="0x" + "2" * 40)
+
+        rate_limiter = MagicMock()
+        rate_limiter.acquire = AsyncMock(return_value=0.0)
+
+        config = MagicMock()
+        config.POLYGON_ADDRESS = "0x" + "1" * 40
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = []
+
+        mock_http_client = AsyncMock()
+        mock_http_client.get = AsyncMock(return_value=mock_response)
+
+        async_client_cm = AsyncMock()
+        async_client_cm.__aenter__.return_value = mock_http_client
+        async_client_cm.__aexit__.return_value = None
+
+        with patch("polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm):
+            await get_portfolio_value(
+                polymarket_client=polymarket_client,
+                rate_limiter=rate_limiter,
+                config=config,
+                include_breakdown=True,
+            )
+
+        assert mock_http_client.get.await_args.kwargs["params"]["user"] == "0x" + "2" * 40
 
 
 class TestMarketAnalysisIdentifierCompatibility:

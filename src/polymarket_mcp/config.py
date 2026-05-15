@@ -42,6 +42,17 @@ class PolymarketConfig(BaseSettings):
     POLYMARKET_API_KEY_NAME: Optional[str] = Field(
         default=None, description="API key name/identifier"
     )
+    POLYMARKET_SIGNATURE_TYPE: int = Field(
+        default=1,
+        description=(
+            "Wallet signature type for CLOB auth: 0=EOA, 1=POLY_PROXY, "
+            "2=GNOSIS_SAFE, 3=POLY_1271/deposit wallet"
+        ),
+    )
+    POLYMARKET_FUNDER: Optional[str] = Field(
+        default=None,
+        description="Funding wallet / deposit wallet address used by Polymarket UI and settlement",
+    )
 
     # Safety Limits - Risk Management
     MAX_ORDER_SIZE_USD: float = Field(
@@ -170,6 +181,26 @@ class PolymarketConfig(BaseSettings):
             raise ValueError(f"LOG_LEVEL must be one of {valid_levels}")
         return v
 
+    @field_validator("POLYMARKET_SIGNATURE_TYPE")
+    @classmethod
+    def validate_signature_type(cls, v: int) -> int:
+        """Validate supported Polymarket wallet signature types."""
+        if v not in {0, 1, 2, 3}:
+            raise ValueError("POLYMARKET_SIGNATURE_TYPE must be one of 0, 1, 2, 3")
+        return v
+
+    @field_validator("POLYMARKET_FUNDER")
+    @classmethod
+    def validate_funder(cls, v: Optional[str]) -> Optional[str]:
+        """Validate optional funder/deposit wallet address."""
+        if v in (None, ""):
+            return None
+        if not v.startswith("0x"):
+            raise ValueError("POLYMARKET_FUNDER must start with 0x")
+        if len(v) != 42:
+            raise ValueError("POLYMARKET_FUNDER must be 42 characters")
+        return v.lower()
+
     def has_api_credentials(self) -> bool:
         """Check if L2 API credentials are configured"""
         return all(
@@ -189,6 +220,11 @@ class PolymarketConfig(BaseSettings):
         if data.get("POLYMARKET_PASSPHRASE"):
             data["POLYMARKET_PASSPHRASE"] = "***HIDDEN***"
         return data
+
+    @property
+    def effective_funder(self) -> str:
+        """Wallet address that actually funds positions/orders in Polymarket."""
+        return (self.POLYMARKET_FUNDER or self.POLYGON_ADDRESS).lower()
 
 
 def load_config() -> PolymarketConfig:

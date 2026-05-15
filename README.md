@@ -244,6 +244,11 @@ POLYGON_ADDRESS=0xYourPolygonAddress
 - You can create them manually in Polymarket UI (`Settings → API`) when available.
 - If not provided, the server derives them at startup from your wallet and logs the values to persist in `.env`.
 
+**Wallet auth mapping (important for MetaMask / UI balance parity):**
+- `POLYGON_ADDRESS` = signer EOA / private key owner.
+- `POLYMARKET_FUNDER` = Polymarket deposit/proxy wallet that actually holds balance and positions in the UI.
+- `POLYMARKET_SIGNATURE_TYPE` = wallet auth mode (`1` legacy proxy, `3` deposit wallet / `POLY_1271` per current Polymarket docs for new API users).
+
 **Recommended Safety Limits:**
 ```env
 MAX_ORDER_SIZE_USD=1000

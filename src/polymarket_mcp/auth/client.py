@@ -84,6 +84,8 @@ class PolymarketClient:
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         passphrase: Optional[str] = None,
+        signature_type: int = 1,
+        funder: Optional[str] = None,
         host: str = "https://clob.polymarket.com",
     ):
         """
@@ -96,11 +98,15 @@ class PolymarketClient:
             api_key: Optional L2 API key
             api_secret: Optional L2 API secret (same as passphrase)
             passphrase: Optional L2 API passphrase
+            signature_type: Polymarket wallet signature type
+            funder: Funding / deposit wallet address used for settlement
             host: CLOB API host URL
         """
         self.private_key = private_key
         self.address = address.lower()
+        self.funder_address = (funder or address).lower()
         self.chain_id = chain_id
+        self.signature_type = signature_type
         self.host = host
 
         # Initialize order signer
@@ -126,26 +132,24 @@ class PolymarketClient:
         self._initialize_client()
 
         logger.info(
-            f"PolymarketClient initialized for {self.address} "
-            f"(chain_id: {chain_id}, L2 auth: {self.api_creds is not None}, "
-            "wallet_flow: metamask)"
+            f"PolymarketClient initialized for signer {self.address} "
+            f"(funder: {self.funder_address}, chain_id: {chain_id}, "
+            f"signature_type: {self.signature_type}, L2 auth: {self.api_creds is not None})"
         )
 
     def _initialize_client(self) -> None:
         """Initialize the ClobClient with appropriate authentication"""
         try:
-            # Build client arguments.
-            # signature_type=1 (POLY_PROXY) matches Polymarket's MetaMask wallet
-            # flow where USDC is held in a Proxy wallet tied to the user's EOA.
-            # Without this, the SDK defaults to EOA (type 0) and every
-            # balance/allowance query returns 0 because the funds live in the
-            # Proxy wallet, not in the raw EOA account.
+            # Build client arguments. Polymarket separates the signing EOA
+            # from the wallet that actually holds funds/positions (`funder`).
+            # For deposit-wallet / proxy flows the funder may differ from the
+            # signer address shown in MetaMask.
             client_args = {
                 "host": self.host,
                 "chain_id": self.chain_id,
                 "key": self.private_key,
-                "signature_type": 1,  # POLY_PROXY
-                "funder": self.address,  # proxy-wallet address == user address
+                "signature_type": self.signature_type,
+                "funder": self.funder_address,
             }
 
             # Add L2 credentials if available
@@ -517,7 +521,7 @@ class PolymarketClient:
             get_positions_fn = getattr(self.client, "get_positions", None)
             if callable(get_positions_fn):
                 try:
-                    positions = get_positions_fn(self.address)
+                    positions = get_positions_fn(self.funder_address)
                 except TypeError:
                     positions = get_positions_fn()
                 if isinstance(positions, list):
@@ -527,7 +531,7 @@ class PolymarketClient:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(
                     "https://data-api.polymarket.com/positions",
-                    params={"user": self.address},
+                    params={"user": self.funder_address},
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -651,7 +655,7 @@ class PolymarketClient:
         get_balance_fn = getattr(self.client, "get_balance", None)
         if callable(get_balance_fn):
             try:
-                balance_data = get_balance_fn(self.address)
+                balance_data = get_balance_fn(self.funder_address)
             except TypeError:
                 # Some SDK variants may expose a no-arg get_balance()
                 balance_data = get_balance_fn()
@@ -687,6 +691,8 @@ class PolymarketClient:
             self._api_creds_from_config
             and not self._zero_balance_proxy_refresh_attempted
             and self._extract_numeric_balance(balance_data) == 0.0
+            and callable(getattr(self.client, "create_or_derive_api_key", None))
+            and callable(getattr(self.client, "set_api_creds", None))
         ):
             self._zero_balance_proxy_refresh_attempted = True
             logger.warning(
@@ -788,8 +794,12 @@ class PolymarketClient:
         )
 
     def get_address(self) -> str:
-        """Get wallet address"""
+        """Get signer wallet address (EOA)."""
         return self.address
+
+    def get_funder_address(self) -> str:
+        """Get wallet address that actually holds funds/positions in Polymarket."""
+        return self.funder_address
 
     def get_chain_id(self) -> int:
         """Get chain ID"""
@@ -803,6 +813,8 @@ def create_polymarket_client(
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
     passphrase: Optional[str] = None,
+    signature_type: int = 1,
+    funder: Optional[str] = None,
 ) -> PolymarketClient:
     """
     Create PolymarketClient instance.
@@ -814,6 +826,8 @@ def create_polymarket_client(
         api_key: Optional L2 API key
         api_secret: Optional L2 API secret
         passphrase: Optional L2 API passphrase
+        signature_type: Polymarket wallet signature type
+        funder: Funding / deposit wallet address
 
     Returns:
         PolymarketClient instance
@@ -825,4 +839,6 @@ def create_polymarket_client(
         api_key=api_key,
         api_secret=api_secret,
         passphrase=passphrase,
+        signature_type=signature_type,
+        funder=funder,
     )
