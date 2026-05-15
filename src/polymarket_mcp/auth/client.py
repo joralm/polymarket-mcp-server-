@@ -84,7 +84,7 @@ class PolymarketClient:
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         passphrase: Optional[str] = None,
-        signature_type: int = 1,
+        signature_type: int = 3,
         funder: Optional[str] = None,
         host: str = "https://clob.polymarket.com",
     ):
@@ -106,7 +106,13 @@ class PolymarketClient:
         self.address = address.lower()
         self.funder_address = (funder or address).lower()
         self.chain_id = chain_id
-        self.signature_type = signature_type
+        if signature_type != 3:
+            logger.warning(
+                "signature_type=%s requested, but this server enforces MetaMask deposit-wallet flow "
+                "(signature_type=3). Overriding to 3.",
+                signature_type,
+            )
+        self.signature_type = 3
         self.host = host
 
         # Initialize order signer
@@ -115,6 +121,7 @@ class PolymarketClient:
         # L2 API credentials
         self.api_creds: Optional[ApiCreds] = None
         self._api_creds_from_config = False
+        self._api_credentials_verified = False
         self._zero_balance_proxy_refresh_attempted = False
         if api_key and (api_secret or passphrase):
             secret = api_secret or passphrase
@@ -136,6 +143,12 @@ class PolymarketClient:
             f"(funder: {self.funder_address}, chain_id: {chain_id}, "
             f"signature_type: {self.signature_type}, L2 auth: {self.api_creds is not None})"
         )
+        logger.debug(
+            "Auth bootstrap state: creds_from_config=%s, verified=%s, zero_balance_refresh_attempted=%s",
+            self._api_creds_from_config,
+            self._api_credentials_verified,
+            self._zero_balance_proxy_refresh_attempted,
+        )
 
     def _initialize_client(self) -> None:
         """Initialize the ClobClient with appropriate authentication"""
@@ -155,6 +168,15 @@ class PolymarketClient:
             # Add L2 credentials if available
             if self.api_creds:
                 client_args["creds"] = self.api_creds
+            logger.debug(
+                "Initializing ClobClient with host=%s chain_id=%s signature_type=%s signer=%s funder=%s has_l2=%s",
+                self.host,
+                self.chain_id,
+                self.signature_type,
+                self.address,
+                self.funder_address,
+                self.api_creds is not None,
+            )
 
             # Create client
             self.client = ClobClient(**client_args)
@@ -634,6 +656,12 @@ class PolymarketClient:
             raise RuntimeError("L2 API credentials required")
 
         try:
+            logger.debug(
+                "Running get_balance() with verified=%s creds_from_config=%s funder=%s",
+                self._api_credentials_verified,
+                self._api_creds_from_config,
+                self.funder_address,
+            )
             balance_data = self._fetch_balance_once()
             return self._handle_zero_balance_refresh(balance_data)
         except PolyApiException as e:
@@ -654,6 +682,7 @@ class PolymarketClient:
         # Prefer legacy SDK method when available.
         get_balance_fn = getattr(self.client, "get_balance", None)
         if callable(get_balance_fn):
+            logger.debug("Balance fetch path: client.get_balance")
             try:
                 balance_data = get_balance_fn(self.funder_address)
             except TypeError:
@@ -661,16 +690,29 @@ class PolymarketClient:
                 balance_data = get_balance_fn()
 
             if isinstance(balance_data, dict):
-                return self._normalize_balance_payload(balance_data)
+                normalized = self._normalize_balance_payload(balance_data)
+                logger.debug(
+                    "Balance fetched via get_balance: keys=%s extracted=%s",
+                    sorted(normalized.keys()),
+                    self._extract_numeric_balance(normalized),
+                )
+                return normalized
             return {"balance": str(balance_data)}
 
         # SDK >=0.28 exposes get_balance_allowance() instead.
         get_balance_allowance_fn = getattr(self.client, "get_balance_allowance", None)
         if callable(get_balance_allowance_fn):
+            logger.debug("Balance fetch path: client.get_balance_allowance")
             params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
             balance_data = get_balance_allowance_fn(params)
             if isinstance(balance_data, dict):
-                return self._normalize_balance_payload(balance_data)
+                normalized = self._normalize_balance_payload(balance_data)
+                logger.debug(
+                    "Balance fetched via get_balance_allowance: keys=%s extracted=%s",
+                    sorted(normalized.keys()),
+                    self._extract_numeric_balance(normalized),
+                )
+                return normalized
             return {"balance": str(balance_data)}
 
         raise AttributeError("ClobClient does not expose a supported balance method")
@@ -678,6 +720,24 @@ class PolymarketClient:
     def has_api_credentials(self) -> bool:
         """Check if L2 API credentials are available"""
         return self.api_creds is not None
+
+    def has_verified_api_credentials(self) -> bool:
+        """Check if L2 credentials are present and were successfully verified."""
+        return self.api_creds is not None and self._api_credentials_verified
+
+    @staticmethod
+    def _probe_looks_valid(balance_payload: Any) -> bool:
+        """Return True when a balance probe contains recognizable balance fields."""
+        if not isinstance(balance_payload, dict):
+            return False
+        direct_keys = {"balance", "available", "available_balance", "amount", "value"}
+        if any(balance_payload.get(key) is not None for key in direct_keys):
+            return True
+        for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
+            nested = balance_payload.get(nested_key)
+            if isinstance(nested, dict) and any(nested.get(key) is not None for key in direct_keys):
+                return True
+        return False
 
     def _handle_zero_balance_refresh(
         self, balance_data: Dict[str, Any]
@@ -738,31 +798,90 @@ class PolymarketClient:
         if not self.api_creds:
             logger.info("No API credentials found. Attempting to create...")
             await self.create_api_credentials()
+            post_create_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
+            self._api_credentials_verified = self._probe_looks_valid(post_create_probe)
+            logger.debug(
+                "Post-create credential probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                self._probe_looks_valid(post_create_probe),
+                self._extract_numeric_balance(post_create_probe),
+                self._api_credentials_verified,
+            )
+            if not self._api_credentials_verified:
+                logger.warning("Post-create credential probe returned unexpected payload; keeping unverified.")
             logger.info("API credentials created successfully!")
             return
 
         logger.info("Testing existing API credentials...")
         try:
+            logger.debug(
+                "Credential verification start: signer=%s funder=%s signature_type=%s has_l2=%s",
+                self.address,
+                self.funder_address,
+                self.signature_type,
+                self.api_creds is not None,
+            )
             balance_probe = self._fetch_balance_once()
-            self._handle_zero_balance_refresh(balance_probe)
-            logger.info("API credentials verified successfully.")
+            verified_probe = self._handle_zero_balance_refresh(balance_probe)
+            logger.debug(
+                "Credential verification probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                self._probe_looks_valid(verified_probe),
+                self._extract_numeric_balance(verified_probe),
+                self._api_credentials_verified,
+            )
+            self._api_credentials_verified = self._probe_looks_valid(verified_probe)
+            if not self._api_credentials_verified:
+                logger.warning("Credential probe returned unexpected payload; keeping unverified.")
+                return
+            if self._extract_numeric_balance(verified_probe) > 0.0:
+                logger.info("API credentials verified successfully.")
+            else:
+                logger.warning(
+                    "API credentials were accepted, but spendable USDC balance is 0 for funder %s. "
+                    "If your Polymarket UI shows funds, set POLYMARKET_FUNDER to your actual "
+                    "deposit wallet address and keep POLYMARKET_SIGNATURE_TYPE=3 "
+                    "(MetaMask deposit-wallet flow).",
+                    self.funder_address,
+                )
         except PolyApiException as e:
+            self._api_credentials_verified = False
             if e.status_code == 401:
                 logger.warning("API credentials rejected (HTTP 401) — refreshing credentials...")
                 self._refresh_api_credentials()
-                logger.info("API credentials refreshed successfully.")
+                post_refresh_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
+                self._api_credentials_verified = self._probe_looks_valid(post_refresh_probe)
+                logger.debug(
+                    "Post-refresh credential probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                    self._probe_looks_valid(post_refresh_probe),
+                    self._extract_numeric_balance(post_refresh_probe),
+                    self._api_credentials_verified,
+                )
+                if not self._api_credentials_verified:
+                    logger.warning(
+                        "Post-refresh credential probe returned unexpected payload; keeping unverified."
+                    )
+                    return
+                if self._extract_numeric_balance(post_refresh_probe) > 0.0:
+                    logger.info("API credentials refreshed and verified successfully.")
+                else:
+                    logger.warning(
+                        "API credentials refreshed successfully, but spendable USDC is still 0 for funder %s.",
+                        self.funder_address,
+                    )
             else:
                 logger.warning(
                     "API credential probe returned an unexpected error (%s). "
                     "Credentials may still be valid; continuing startup.",
                     e,
                 )
+                logger.debug("Unexpected API credential probe exception details", exc_info=True)
         except Exception as e:
+            self._api_credentials_verified = False
             logger.warning(
                 "Could not verify API credentials at startup (%s). "
                 "Credentials may still be valid; continuing startup.",
                 e,
             )
+            logger.debug("Credential verification exception details", exc_info=True)
 
     def _refresh_api_credentials(
         self,
@@ -795,6 +914,7 @@ class PolymarketClient:
             api_secret=new_creds.api_secret,
             api_passphrase=new_creds.api_passphrase,
         )
+        self._api_credentials_verified = False
         # After refresh, treat credentials as wallet-derived/runtime-managed.
         # `_zero_balance_proxy_refresh_attempted` remains the one-shot guard
         # that prevents repeated refresh loops on truly zero-balance wallets.
@@ -804,6 +924,12 @@ class PolymarketClient:
         self.client.set_api_creds(self.api_creds)
 
         credentials_changed = old_api_key is None or new_creds.api_key != old_api_key
+        logger.debug(
+            "Credential refresh result: changed=%s old_key_set=%s new_key_set=%s",
+            credentials_changed,
+            old_api_key is not None,
+            bool(new_creds.api_key),
+        )
         if credentials_changed:
             # Only emit the noisy banner when the key genuinely changed so that
             # wallets with zero USDC balance don't spam "NEW CREDENTIALS GENERATED"
@@ -842,7 +968,7 @@ def create_polymarket_client(
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
     passphrase: Optional[str] = None,
-    signature_type: int = 1,
+    signature_type: int = 3,
     funder: Optional[str] = None,
 ) -> PolymarketClient:
     """

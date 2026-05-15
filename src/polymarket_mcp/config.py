@@ -43,10 +43,10 @@ class PolymarketConfig(BaseSettings):
         default=None, description="API key name/identifier"
     )
     POLYMARKET_SIGNATURE_TYPE: int = Field(
-        default=1,
+        default=3,
         description=(
-            "Wallet signature type for CLOB auth: 0=EOA, 1=POLY_PROXY, "
-            "2=GNOSIS_SAFE, 3=POLY_1271/deposit wallet"
+            "Wallet signature type for CLOB auth. This server supports only "
+            "3=POLY_1271/deposit wallet (MetaMask deposit flow)."
         ),
     )
     POLYMARKET_FUNDER: Optional[str] = Field(
@@ -184,9 +184,12 @@ class PolymarketConfig(BaseSettings):
     @field_validator("POLYMARKET_SIGNATURE_TYPE")
     @classmethod
     def validate_signature_type(cls, v: int) -> int:
-        """Validate supported Polymarket wallet signature types."""
-        if v not in {0, 1, 2, 3}:
-            raise ValueError("POLYMARKET_SIGNATURE_TYPE must be one of 0, 1, 2, 3")
+        """Validate supported Polymarket wallet signature type."""
+        if v != 3:
+            raise ValueError(
+                "POLYMARKET_SIGNATURE_TYPE must be 3 (POLY_1271/deposit wallet). "
+                "Flow 1 (POLY_PROXY) is no longer supported by this server."
+            )
         return v
 
     @field_validator("POLYMARKET_FUNDER")

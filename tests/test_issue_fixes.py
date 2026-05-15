@@ -212,6 +212,17 @@ class TestMarketFiltering:
             assert "Old featured" not in questions, "Expired featured market should be filtered out"
             assert "Active featured" in questions
 
+    def test_parse_market_end_datetime_supports_iso_and_timestamp(self):
+        """End-date parser should normalize both ISO-Z strings and unix timestamps to UTC."""
+        from polymarket_mcp.tools.market_discovery import _parse_market_end_datetime
+
+        iso_dt = _parse_market_end_datetime("2026-07-31T12:00:00Z")
+        ts_dt = _parse_market_end_datetime(1785499200)  # 2026-07-31T12:00:00+00:00
+
+        assert iso_dt is not None and iso_dt.tzinfo is not None
+        assert ts_dt is not None and ts_dt.tzinfo is not None
+        assert iso_dt == ts_dt
+
     @pytest.mark.asyncio
     async def test_filter_by_category_sends_closed_false(self):
         """filter_markets_by_category must include closed=false."""
@@ -536,6 +547,14 @@ class TestCriticalRuntimeFixes:
 
 class TestWalletConfigFlow:
     """Regression tests for MetaMask wallet configuration flow."""
+
+    def test_config_rejects_non_deposit_signature_flow(self):
+        with pytest.raises(ValueError, match="must be 3"):
+            PolymarketConfig(
+                POLYGON_PRIVATE_KEY="0" * 64,
+                POLYGON_ADDRESS="0x" + "1" * 40,
+                POLYMARKET_SIGNATURE_TYPE=1,
+            )
 
     @pytest.mark.asyncio
     async def test_web_dashboard_initializes_client_with_wallet_and_api_credentials(self):
@@ -1105,8 +1124,8 @@ class TestClobClientSignatureType:
     queries target the wrong wallet and diverge from the Polymarket UI.
     """
 
-    def test_initialize_client_uses_poly_proxy_signature_type(self):
-        """ClobClient must be created with signature_type=1 (POLY_PROXY)."""
+    def test_initialize_client_uses_deposit_wallet_signature_type_by_default(self):
+        """ClobClient defaults to signature_type=3 for MetaMask deposit-wallet flow."""
         captured_args = {}
 
         def fake_clob_init(self_inner, **kwargs):
@@ -1134,12 +1153,12 @@ class TestClobClientSignatureType:
                 address="0x" + "a" * 40,
             )
 
-        assert captured_args.get("signature_type") == 1, (
-            "ClobClient must use signature_type=1 (POLY_PROXY) so that "
-            "balance-allowance queries return the Proxy-wallet balance, not 0"
+        assert captured_args.get("signature_type") == 3, (
+            "ClobClient default signature_type should be 3 (POLY_1271/deposit wallet) "
+            "for current MetaMask deposit-wallet API flows"
         )
         assert captured_args.get("funder") == "0x" + "a" * 40, (
-            "funder must be set to the user's address for POLY_PROXY wallets"
+            "funder must default to the user's signer address when POLYMARKET_FUNDER is not provided"
         )
 
     def test_initialize_client_accepts_distinct_funder_and_signature_type(self):
@@ -1455,6 +1474,25 @@ class TestMarketAnalysisIdentifierCompatibility:
             call_args = mock_fetch.call_args
             params = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("params", {})
             assert params.get("closed") == "false"
+
+    @pytest.mark.asyncio
+    async def test_closing_soon_handles_iso_z_dates_without_timezone_warning(self, caplog):
+        """Closing-soon filtering should compare timezone-aware datetimes safely."""
+        from polymarket_mcp.tools import market_discovery
+
+        with patch.object(
+            market_discovery, "_fetch_gamma_markets", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = [
+                {
+                    "question": "soon market",
+                    "end_date_iso": (datetime.utcnow() - timedelta(days=365)).isoformat() + "Z",
+                }
+            ]
+            results = await market_discovery.get_closing_soon_markets(hours=24, limit=5)
+
+        assert len(results) == 1
+        assert "offset-naive and offset-aware datetimes" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_sports_markets_sends_closed_false(self):
@@ -1780,6 +1818,7 @@ class TestEnsureValidApiCredentials:
 
         mock_probe.assert_called_once()
         mock_refresh.assert_not_called()
+        assert client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
     async def test_stale_creds_401_triggers_refresh(self):
@@ -1794,7 +1833,7 @@ class TestEnsureValidApiCredentials:
         exc_401 = PolyApiException(resp=mock_resp)
 
         with (
-            patch.object(client, "_fetch_balance_once", side_effect=exc_401),
+            patch.object(client, "_fetch_balance_once", side_effect=[exc_401, {"balance": "10.0"}]),
             patch.object(client, "_refresh_api_credentials") as mock_refresh,
         ):
             await client.ensure_valid_api_credentials()
@@ -1834,6 +1873,7 @@ class TestEnsureValidApiCredentials:
             await client.ensure_valid_api_credentials()
 
         mock_refresh.assert_not_called()
+        assert not client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
     async def test_initialize_server_calls_ensure_valid(self):
@@ -1879,3 +1919,37 @@ class TestEnsureValidApiCredentials:
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)
+
+
+class TestVerifiedCredentialGating:
+    """Trading tools should require verified (not just present) API credentials."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_disables_trading_when_creds_not_verified(self):
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "polymarket_client": server_module.polymarket_client,
+            "config": server_module.config,
+        }
+
+        fake_client = MagicMock()
+        fake_client.has_api_credentials.return_value = True
+        fake_client.has_verified_api_credentials.return_value = False
+
+        fake_config = MagicMock()
+        fake_config.WS_ENABLED = False
+
+        try:
+            server_module.polymarket_client = fake_client
+            server_module.config = fake_config
+
+            tools = await server_module.list_tools()
+            tool_names = {tool.name for tool in tools}
+
+            assert "place_order" not in tool_names
+            assert "get_portfolio_value" not in tool_names
+            assert "search_markets" in tool_names
+        finally:
+            server_module.polymarket_client = saved["polymarket_client"]
+            server_module.config = saved["config"]

@@ -30,7 +30,7 @@ from ..tools import market_discovery, market_analysis
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("polymarket_mcp.web.app")
 
 
 def _internal_error_message(action: str) -> str:
@@ -87,6 +87,16 @@ stats = {
 }
 
 
+def _has_authenticated_trading_access() -> bool:
+    """Return True only when API credentials are present and verified."""
+    if not client:
+        return False
+    has_verified = getattr(client, "has_verified_api_credentials", None)
+    if callable(has_verified):
+        return bool(has_verified())
+    return bool(client.has_api_credentials())
+
+
 class ConfigUpdateRequest(BaseModel):
     """Request model for configuration updates"""
 
@@ -107,6 +117,8 @@ async def load_mcp_config():
     try:
         logger.info("Loading MCP configuration...")
         config = load_config()
+        logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
+        logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
 
         # Initialize client
         client = create_polymarket_client(
@@ -119,6 +131,10 @@ async def load_mcp_config():
             signature_type=config.POLYMARKET_SIGNATURE_TYPE,
             funder=config.effective_funder,
         )
+        try:
+            await client.ensure_valid_api_credentials()
+        except Exception as e:
+            logger.warning("Could not verify API credentials for dashboard startup: %s", e)
 
         # Initialize safety limits
         safety_limits = create_safety_limits_from_config(config)
@@ -146,10 +162,10 @@ async def dashboard_home(request: Request):
     # Get MCP status
     mcp_status = {
         "connected": config is not None and client is not None,
-        "mode": "FULL" if (client and client.has_api_credentials()) else "READ-ONLY",
+        "mode": "FULL" if _has_authenticated_trading_access() else "READ-ONLY",
         "address": config.POLYGON_ADDRESS if config else "Not configured",
         "chain_id": config.POLYMARKET_CHAIN_ID if config else None,
-        "tools_available": 45 if (client and client.has_api_credentials()) else 25,
+        "tools_available": 45 if _has_authenticated_trading_access() else 25,
     }
 
     return templates.TemplateResponse(
@@ -187,7 +203,7 @@ async def config_page(request: Request):
                 "address": config.POLYGON_ADDRESS,
                 "chain_id": config.POLYMARKET_CHAIN_ID,
             },
-            "has_api_credentials": client.has_api_credentials() if client else False,
+            "has_api_credentials": _has_authenticated_trading_access(),
         }
 
     return templates.TemplateResponse(
@@ -254,9 +270,9 @@ async def get_status():
             "connected": True,
             "address": config.POLYGON_ADDRESS,
             "chain_id": config.POLYMARKET_CHAIN_ID,
-            "has_api_credentials": client.has_api_credentials(),
-            "mode": "FULL" if client.has_api_credentials() else "READ-ONLY",
-            "tools_available": 45 if client.has_api_credentials() else 25,
+            "has_api_credentials": _has_authenticated_trading_access(),
+            "mode": "FULL" if _has_authenticated_trading_access() else "READ-ONLY",
+            "tools_available": 45 if _has_authenticated_trading_access() else 25,
             "rate_limits": get_rate_limiter().get_status(),
         }
     )

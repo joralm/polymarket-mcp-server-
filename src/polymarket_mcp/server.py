@@ -41,7 +41,7 @@ from .tools import (
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("polymarket_mcp.server")
 
 # Global instances
 server = Server("polymarket-trading")
@@ -51,6 +51,52 @@ safety_limits: Optional[SafetyLimits] = None
 rate_limiter = None
 trading_tools: Optional[TradingTools] = None
 websocket_manager: Optional[WebSocketManager] = None
+
+
+def _has_authenticated_trading_access() -> bool:
+    """Return True only when API credentials are present and verified."""
+    if not polymarket_client:
+        return False
+    has_verified = getattr(polymarket_client, "has_verified_api_credentials", None)
+    if callable(has_verified):
+        return bool(has_verified())
+    return bool(polymarket_client.has_api_credentials())
+
+
+def _log_docker_login_report() -> None:
+    """Emit a startup report showing Docker auth inputs and effective trading readiness."""
+    if not config:
+        return
+
+    has_api_key = bool(config.POLYMARKET_API_KEY)
+    has_api_secret = bool(config.POLYMARKET_API_SECRET)
+    has_passphrase = bool(config.POLYMARKET_PASSPHRASE)
+    has_l2_triplet = has_api_key and (has_api_secret or has_passphrase)
+    full_mode = _has_authenticated_trading_access()
+
+    logger.info("DOCKER LOGIN REPORT")
+    logger.info("  signer (POLYGON_ADDRESS): %s", config.POLYGON_ADDRESS)
+    logger.info("  funder (POLYMARKET_FUNDER/effective): %s", config.effective_funder)
+    logger.info("  signature_type: %s", config.POLYMARKET_SIGNATURE_TYPE)
+    logger.info(
+        "  api creds configured: key=%s secret=%s passphrase=%s (triplet_ready=%s)",
+        has_api_key,
+        has_api_secret,
+        has_passphrase,
+        has_l2_triplet,
+    )
+    logger.info("  auth verified: %s", full_mode)
+    logger.info("  FULL mode (trading enabled): %s", full_mode)
+    if not full_mode:
+        logger.info("  To enable FULL mode in Docker, ensure:")
+        logger.info("    1) POLYGON_PRIVATE_KEY matches POLYGON_ADDRESS")
+        logger.info("    2) POLYMARKET_FUNDER is the wallet that holds UI funds/positions")
+        logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
+        logger.info(
+            "    4) L2 API credentials are valid or allow auto-derivation on startup "
+            "(POLYMARKET_API_KEY/POLYMARKET_API_SECRET/POLYMARKET_PASSPHRASE)"
+        )
+        logger.info("    5) LOG_LEVEL=DEBUG to inspect auth diagnostics")
 
 
 class StreamableHTTPASGIApp:
@@ -114,7 +160,7 @@ async def list_tools() -> list[types.Tool]:
     tools.extend(market_analysis.get_tools())
 
     # Only available with API credentials
-    has_credentials = polymarket_client and polymarket_client.has_api_credentials()
+    has_credentials = _has_authenticated_trading_access()
 
     if has_credentials:
         # Trading tools (require L2 auth)
@@ -189,7 +235,7 @@ async def read_resource(uri: str) -> str:
             "address": config.POLYGON_ADDRESS if config else None,
             "chain_id": config.POLYMARKET_CHAIN_ID if config else None,
             "has_api_credentials": (
-                polymarket_client.has_api_credentials() if polymarket_client else False
+                _has_authenticated_trading_access()
             ),
             "server_version": "0.1.0",
         }
@@ -369,6 +415,7 @@ async def initialize_server() -> None:
         # Set log level for polymarket_mcp only; leave root at INFO so
         # third-party libraries (httpcore, httpx, websockets, …) stay quiet.
         logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
+        logging.getLogger("__main__").setLevel(config.LOG_LEVEL)
         # Suppress noisy low-level loggers that spam at DEBUG even when the
         # application itself is at INFO.
         for _noisy in ("httpcore", "httpx", "websockets", "asyncio", "uvicorn.access"):
@@ -376,6 +423,12 @@ async def initialize_server() -> None:
 
         logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
         logger.debug("POLYMARKET_API_KEY is %s", "configured" if config.POLYMARKET_API_KEY else "not set")
+        logger.debug(
+            "Wallet auth config: signer=%s funder=%s signature_type=%s",
+            config.POLYGON_ADDRESS,
+            config.effective_funder,
+            config.POLYMARKET_SIGNATURE_TYPE,
+        )
 
         # Initialize Polymarket client
         logger.info("Initializing Polymarket client...")
@@ -395,6 +448,15 @@ async def initialize_server() -> None:
         # detected and regenerated before any user request arrives.
         try:
             await polymarket_client.ensure_valid_api_credentials()
+            logger.debug(
+                "Post-startup auth state: has_l2=%s verified=%s",
+                polymarket_client.has_api_credentials(),
+                (
+                    polymarket_client.has_verified_api_credentials()
+                    if hasattr(polymarket_client, "has_verified_api_credentials")
+                    else polymarket_client.has_api_credentials()
+                ),
+            )
         except Exception as e:
             logger.warning("Could not create or validate API credentials: %s", e)
             logger.info("Continuing in READ-ONLY mode")
@@ -413,7 +475,7 @@ async def initialize_server() -> None:
         logger.info("Rate limiter initialized")
 
         # Initialize trading tools (only if authenticated)
-        if polymarket_client.has_api_credentials():
+        if _has_authenticated_trading_access():
             logger.info("Initializing trading tools...")
             trading_tools = TradingTools(
                 client=polymarket_client, safety_limits=safety_limits, config=config
@@ -445,7 +507,7 @@ async def initialize_server() -> None:
         logger.info(f"Connected to Polymarket on chain ID {config.POLYMARKET_CHAIN_ID}")
 
         # Report available tools based on authentication
-        if polymarket_client.has_api_credentials():
+        if _has_authenticated_trading_access():
             logger.info("Mode: FULL (authenticated)")
             logger.info(
                 "Available tools: 45 total (8 Discovery, 10 Analysis, 12 Trading, 8 Portfolio, 7 Real-time)"
@@ -454,6 +516,8 @@ async def initialize_server() -> None:
             logger.info("Mode: READ-ONLY (no API credentials)")
             logger.info("Available tools: 25 total (8 Discovery, 10 Analysis, 7 Real-time)")
             logger.info("Trading and Portfolio tools require API credentials")
+
+        _log_docker_login_report()
 
     except Exception as e:
         logger.exception("Failed to initialize server: %s", e)
