@@ -366,8 +366,13 @@ async def initialize_server() -> None:
         logger.info("Loading configuration...")
         config = load_config()
 
-        # Set log level from config
-        logging.getLogger().setLevel(config.LOG_LEVEL)
+        # Set log level for polymarket_mcp only; leave root at INFO so
+        # third-party libraries (httpcore, httpx, websockets, …) stay quiet.
+        logging.getLogger("polymarket_mcp").setLevel(config.LOG_LEVEL)
+        # Suppress noisy low-level loggers that spam at DEBUG even when the
+        # application itself is at INFO.
+        for _noisy in ("httpcore", "httpx", "websockets", "asyncio", "uvicorn.access"):
+            logging.getLogger(_noisy).setLevel(logging.WARNING)
 
         logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
 
