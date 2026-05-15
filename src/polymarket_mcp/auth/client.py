@@ -682,7 +682,7 @@ class PolymarketClient:
         if (
             self._api_creds_from_config
             and not self._zero_balance_proxy_refresh_attempted
-            and self._extract_numeric_balance(balance_data) <= 0.0
+            and self._extract_numeric_balance(balance_data) == 0.0
         ):
             self._zero_balance_proxy_refresh_attempted = True
             logger.warning(
