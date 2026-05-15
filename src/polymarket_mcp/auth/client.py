@@ -803,7 +803,7 @@ class PolymarketClient:
         # calls use the new key without a full re-initialization.
         self.client.set_api_creds(self.api_creds)
 
-        credentials_changed = new_creds.api_key != old_api_key
+        credentials_changed = old_api_key is None or new_creds.api_key != old_api_key
         if credentials_changed:
             # Only emit the noisy banner when the key genuinely changed so that
             # wallets with zero USDC balance don't spam "NEW CREDENTIALS GENERATED"
