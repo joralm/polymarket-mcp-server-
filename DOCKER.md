@@ -92,7 +92,7 @@ DEMO_MODE=false                # Set to true for testing without real funds
 
 # Configuration
 LOG_LEVEL=INFO                 # DEBUG, INFO, WARNING, ERROR
-POLYMARKET_CHAIN_ID=137        # Polygon mainnet (137) or Mumbai testnet (80001)
+POLYMARKET_CHAIN_ID=137        # Polygon mainnet (137) or Amoy testnet (80002)
 
 # Safety limits
 MAX_ORDER_SIZE_USD=1000

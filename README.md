@@ -246,6 +246,8 @@ POLYMARKET_ENV=mainnet
 - `POLYMARKET_ENV=testnet` → Chain `80002`, CLOB `https://clob-testnet.polytest.cloud`, Gamma `https://gcomm-api.polytest.cloud`
 - You can still override `POLYMARKET_CHAIN_ID`, `CLOB_API_URL`, and `GAMMA_API_URL` explicitly.
 
+> ⚠️ **Testnet status unknown**: The testnet endpoints (`clob-testnet.polytest.cloud`, `gcomm-api.polytest.cloud`) may currently be unavailable. Their current operational status is unknown. If they do not resolve or respond, use `POLYMARKET_ENV=mainnet` instead. The codebase remains prepared for testnet use when/if those endpoints become accessible again.
+
 **Supported trading flow (important):**
 - Use a wallet created/linked through the Polymarket **deposit-wallet flow** (MetaMask-linked).
 - Social-login-only accounts are not supported for order placement.
@@ -335,6 +337,22 @@ MCP_TRANSPORT=stdio
 - **[Usage Examples](USAGE_EXAMPLES.py)** - Code examples for all tools
 - **[Test Examples](TEST_EXAMPLES.py)** - Example test implementations
 - **[Market Analysis Scripts](analyze_top_markets.py)** - Advanced analysis examples
+
+## 🌐 APIs Used
+
+| Environment | Gamma API | CLOB API | Auth | Status |
+|-------------|-----------|----------|------|--------|
+| **Mainnet** | `https://gamma-api.polymarket.com` | `https://clob.polymarket.com` | None (read) / L2 (trade) | ✅ Active |
+| **Testnet** | `https://gcomm-api.polytest.cloud` | `https://clob-testnet.polytest.cloud` | None (read-only / test mode) | ⚠️ Status currently unknown |
+
+> **Note:** Testnet endpoints are documented here for compatibility with Polymarket testnet setups.
+> At the time of writing, we do not know whether these endpoints are currently operational — DNS lookups may fail with `NXDOMAIN`.
+> If testnet access is unavailable, use `POLYMARKET_ENV=mainnet` with the mainnet endpoints above.
+> The codebase remains prepared for testnet use when/if those endpoints become accessible again.
+>
+> Mainnet (`gamma-api.polymarket.com` / `clob.polymarket.com`) is the **known active environment**.
+
+---
 
 ### System Architecture
 
