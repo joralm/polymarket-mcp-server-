@@ -1007,7 +1007,9 @@ class TestSDKCompatibility:
 
         assert refreshed == 1, "Zero balance with configured creds should trigger one refresh"
         assert call_count == 2, "Balance call should retry once after proxy refresh"
+        # Canonical `balance` follows spendable cash (`available`) by design.
         assert balance["balance"] == "0.93"
+        assert balance["available"] == "0.93"
 
     @pytest.mark.asyncio
     async def test_get_balance_does_not_refresh_on_zero_when_creds_not_from_config(self):
@@ -1067,10 +1069,11 @@ class TestClobClientSignatureType:
             self_inner._ClobClient__fee_rates = {}
 
         with patch.object(ClobClient, "__init__", fake_clob_init):
-            _ = PolymarketClient(
+            client = PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
             )
+        assert client is not None
 
         assert captured_args.get("signature_type") == 1, (
             "ClobClient must use signature_type=1 (POLY_PROXY) so that "
