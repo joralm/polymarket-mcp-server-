@@ -537,7 +537,21 @@ async def initialize_server() -> None:
             logging.getLogger(_noisy).setLevel(logging.WARNING)
 
         demo_mode = getattr(config, "DEMO_MODE", False) is True
-        polymarket_ready = getattr(config, "polymarket_ready", False) is True
+        polymarket_ready_attr = getattr(config, "polymarket_ready", None)
+        if isinstance(polymarket_ready_attr, bool):
+            polymarket_ready = polymarket_ready_attr
+        else:
+            polymarket_ready = all(
+                (
+                    getattr(config, "POLYMARKET_ENV", None),
+                    getattr(config, "POLYMARKET_CHAIN_ID", None),
+                    getattr(config, "CLOB_API_URL", None),
+                    getattr(config, "GAMMA_API_URL", None),
+                )
+            )
+        polymarket_config_error = getattr(config, "polymarket_config_error", None)
+        if not isinstance(polymarket_config_error, str):
+            polymarket_config_error = None
 
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
@@ -545,7 +559,7 @@ async def initialize_server() -> None:
         if not polymarket_ready:
             logger.warning(
                 "%s; skipping Polymarket initialization",
-                config.polymarket_config_error or "Polymarket environment is not fully configured",
+                polymarket_config_error or "Polymarket environment is not fully configured",
             )
             polymarket_client = None
         elif demo_mode:

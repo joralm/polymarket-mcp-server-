@@ -1499,9 +1499,15 @@ class TestMarketAnalysisIdentifierCompatibility:
         fake_config.POLYGON_PRIVATE_KEY = "0" * 64
         fake_config.POLYGON_ADDRESS = "0x" + "0" * 40
         fake_config.POLYMARKET_CHAIN_ID = 137
+        fake_config.POLYMARKET_ENV = "mainnet"
         fake_config.POLYMARKET_API_KEY = None
         fake_config.POLYMARKET_API_SECRET = None
         fake_config.POLYMARKET_PASSPHRASE = None
+        fake_config.CLOB_API_URL = "https://clob.polymarket.com"
+        fake_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        fake_config.polymarket_ready = True
+        fake_config.polymarket_config_error = None
+        fake_config.WS_ENABLED = True
         fake_config.LOG_LEVEL = "INFO"
 
         fake_client = MagicMock()
@@ -2052,6 +2058,8 @@ class TestEnsureValidApiCredentials:
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"
         mock_config.DEMO_MODE = False
+        mock_config.polymarket_ready = True
+        mock_config.polymarket_config_error = None
 
         try:
             with (

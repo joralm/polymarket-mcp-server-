@@ -43,12 +43,6 @@ def test_env_vars():
         original_env[key] = os.environ.get(key)
 
     # Set test values if not already set
-    if not os.environ.get("POLYGON_PRIVATE_KEY"):
-        os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
-
-    if not os.environ.get("POLYGON_ADDRESS"):
-        os.environ["POLYGON_ADDRESS"] = "0x" + "0" * 40
-
     if not os.environ.get("POLYMARKET_ENV"):
         os.environ["POLYMARKET_ENV"] = "mainnet"
 
