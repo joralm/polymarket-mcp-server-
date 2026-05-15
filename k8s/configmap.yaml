@@ -12,12 +12,18 @@ data:
   # Configuration
   LOG_LEVEL: "INFO"
   POLYMARKET_CHAIN_ID: "137"
+  WS_ENABLED: "true"
+  POLYMARKET_SIGNATURE_TYPE: "1"
+  MCP_TRANSPORT: "streamable-http"
+  MCP_STREAMABLE_HTTP_HOST: "0.0.0.0"
+  MCP_STREAMABLE_HTTP_PORT: "8000"
+  MCP_STREAMABLE_HTTP_PATH: "/mcp"
 
   # Safety limits
   MAX_ORDER_SIZE_USD: "1000"
-  MAX_TOTAL_EXPOSURE_USD: "10000"
-  REQUIRE_CONFIRMATION_ABOVE_USD: "100"
-  MAX_POSITION_SIZE_PER_MARKET: "0.3"
+  MAX_TOTAL_EXPOSURE_USD: "5000"
+  REQUIRE_CONFIRMATION_ABOVE_USD: "500"
+  MAX_POSITION_SIZE_PER_MARKET: "2000"
   MIN_LIQUIDITY_REQUIRED: "10000"
   MAX_SPREAD_TOLERANCE: "0.05"
 
@@ -28,6 +34,3 @@ data:
   # API endpoints (public configuration)
   CLOB_API_URL: "https://clob.polymarket.com"
   GAMMA_API_URL: "https://gamma-api.polymarket.com"
-
-  # Rate limiting
-  RATE_LIMIT_ENABLED: "true"
