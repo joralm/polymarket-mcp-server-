@@ -1073,7 +1073,7 @@ class TestClobClientSignatureType:
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
             )
-        assert isinstance(test_client, PolymarketClient)
+        assert test_client.address == "0x" + "a" * 40
 
         assert captured_args.get("signature_type") == 1, (
             "ClobClient must use signature_type=1 (POLY_PROXY) so that "

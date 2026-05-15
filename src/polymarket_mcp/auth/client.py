@@ -678,7 +678,11 @@ class PolymarketClient:
     def _refresh_proxy_credentials_on_zero_balance(
         self, balance_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Handle proxy-wallet migration: refresh configured creds once if balance probes as 0."""
+        """Handle proxy-wallet migration: refresh configured creds once if balance probes as 0.
+
+        `balance_data` can be any normalized CLOB balance payload shape accepted
+        by `_extract_numeric_balance()` (top-level or nested available/balance fields).
+        """
         if (
             self._api_creds_from_config
             and not self._zero_balance_proxy_refresh_attempted
