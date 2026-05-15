@@ -353,42 +353,74 @@ async def get_price_history(
     resolution: str = "1h",
 ) -> List[Dict[str, Any]]:
     """
-    Get historical price data.
+    Get historical price data from the Polymarket CLOB prices-history endpoint.
 
     Args:
         token_id: Token ID
-        start_date: Start date (ISO format or timestamp)
-        end_date: End date (ISO format or timestamp)
-        resolution: Time resolution ('1m', '5m', '1h', '1d')
+        start_date: Start date (ISO format or unix timestamp as string)
+        end_date: End date (ISO format or unix timestamp as string)
+        resolution: Time resolution ('1h', '6h', '1d', '1w', 'max').
+            When provided without dates the CLOB returns a built-in window.
 
     Returns:
-        OHLC price data
+        List of {t, p} dicts where t=unix timestamp and p=price (0-1).
     """
     try:
-        # Calculate default date range if not provided
-        if not end_date:
-            end_date = datetime.utcnow().isoformat()
+        # Map resolution aliases to Polymarket interval values.
+        # '1m' and '5m' are not natively supported by the CLOB /prices-history endpoint;
+        # when they are requested we fall through to the timestamp-range path so callers
+        # receive as much data as the API can provide rather than an error.
+        _resolution_map = {
+            "1m": None,
+            "5m": None,
+            "1h": "1h",
+            "6h": "6h",
+            "1d": "1d",
+            "1w": "1w",
+            "max": "max",
+        }
+        interval = _resolution_map.get(resolution.lower())
 
-        if not start_date:
-            # Default to 7 days ago
-            start_dt = datetime.utcnow() - timedelta(days=7)
-            start_date = start_dt.isoformat()
+        params: Dict[str, Any] = {"market": token_id}
 
-        # Note: Polymarket doesn't have a public historical price API
-        # This would need to be implemented with a data provider or by storing prices
-        # For now, return a placeholder response
+        # Parse start/end dates to unix timestamps when provided
+        def _to_unix(value: str) -> int:
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                pass
+            try:
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return int(dt.timestamp())
+            except Exception:
+                pass
+            return int(datetime.utcnow().timestamp())
 
-        logger.warning(
-            "Historical price data not available via public API. "
-            "Consider using a third-party data provider."
-        )
+        if start_date:
+            params["startTs"] = _to_unix(start_date)
+        if end_date:
+            params["endTs"] = _to_unix(end_date)
 
-        return [
-            {
-                "error": "Historical price data not available via public Polymarket API",
-                "suggestion": "Use real-time price tracking or third-party data providers",
-            }
-        ]
+        # Use interval if available and no explicit timestamps were given
+        if interval and not start_date and not end_date:
+            params["interval"] = interval
+        elif not start_date or not end_date:
+            # Default to past 7 days when partial dates or unsupported resolution
+            now = int(datetime.utcnow().timestamp())
+            params.setdefault("startTs", now - 7 * 24 * 3600)
+            params.setdefault("endTs", now)
+
+        data = await _fetch_clob_api("/prices-history", params)
+
+        # The endpoint returns {"history": [{"t": <ts>, "p": <price>}, ...]}
+        if isinstance(data, dict):
+            history = data.get("history", data.get("data", []))
+        elif isinstance(data, list):
+            history = data
+        else:
+            history = []
+
+        return history
 
     except Exception as e:
         logger.error(f"Failed to get price history: {e}")

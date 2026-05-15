@@ -379,7 +379,13 @@ class TradingTools:
 
     async def create_market_order(self, market_id: str, side: str, size: float) -> Dict[str, Any]:
         """
-        Execute market order at best available price (FOK).
+        Execute a market order (FOK) using the SDK's ``MarketOrderArgsV2`` pattern.
+
+        Unlike limit orders, market orders pass the USDC *amount* directly to the CLOB;
+        the exchange fills at whatever price(s) are available and cancels any unfilled
+        remainder immediately (Fill-Or-Kill semantics).  This avoids the stale-price
+        race condition that would occur if we looked up the orderbook, extracted a price,
+        and then placed a limit-FOK at that price.
 
         Args:
             market_id: Market condition ID
@@ -390,42 +396,96 @@ class TradingTools:
             Dict with execution details
         """
         try:
-            # Get current best price
+            await self.rate_limiter.acquire(EndpointCategory.TRADING_BURST)
+
+            # Resolve market → YES token
             market = await self._get_market_with_gamma_fallback(market_id)
             tokens = self._extract_market_tokens(market)
             if not tokens:
                 raise ValueError(f"No tokens found for market {market_id}")
 
             token_id = self._get_yes_token_id(tokens)
-
-            # Get best price from orderbook
-            orderbook = await self.client.get_orderbook(token_id)
-
             side_upper = side.upper()
-            if side_upper == "BUY":
-                # Buy at best ask
-                asks = orderbook.get("asks", [])
-                if not asks:
-                    raise ValueError("No asks available in orderbook")
-                best_price = float(asks[0]["price"])
-            else:
-                # Sell at best bid
-                bids = orderbook.get("bids", [])
-                if not bids:
-                    raise ValueError("No bids available in orderbook")
-                best_price = float(bids[0]["price"])
 
-            logger.info(f"Executing market order: {side} ${size} @ market price {best_price}")
+            if side_upper not in ("BUY", "SELL"):
+                raise ValueError(f"Side must be BUY or SELL, got {side}")
 
-            # Use FOK (Fill-Or-Kill) for market orders
-            result = await self.create_limit_order(
-                market_id=market_id, side=side, price=best_price, size=size, order_type="FOK"
+            if size <= 0:
+                raise ValueError(f"Size must be positive, got {size}")
+
+            # Safety validation — fetch current mid-price from the orderbook so we
+            # can run the same risk checks as limit orders.
+            orderbook = await self.client.get_orderbook(token_id)
+            bids = orderbook.get("bids", [])
+            asks = orderbook.get("asks", [])
+            best_bid = float(bids[0]["price"]) if bids else 0.0
+            best_ask = float(asks[0]["price"]) if asks else 1.0
+            reference_price = best_ask if side_upper == "BUY" else best_bid
+            if reference_price <= 0:
+                raise ValueError(f"No {'asks' if side_upper == 'BUY' else 'bids'} available in orderbook")
+
+            bid_liquidity = sum(float(b["price"]) * float(b["size"]) for b in bids[:10])
+            ask_liquidity = sum(float(a["price"]) * float(a["size"]) for a in asks[:10])
+
+            market_data = MarketData(
+                market_id=market_id,
+                token_id=token_id,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                bid_liquidity=bid_liquidity,
+                ask_liquidity=ask_liquidity,
+                total_volume=float(market.get("volume", 0)),
             )
 
-            result["execution_type"] = "market_order"
-            result["executed_price"] = best_price
+            # Size in shares (for safety-limit checks only; SDK takes USDC amount).
+            # reference_price > 0 is guaranteed by the guard above.
+            size_in_shares = size / reference_price
 
-            return result
+            positions_data = await self.client.get_positions()
+            positions = self._convert_positions(positions_data)
+
+            order_request = OrderRequest(
+                token_id=token_id,
+                price=reference_price,
+                size=size_in_shares,
+                side=side_upper,
+                market_id=market_id,
+            )
+
+            is_valid, error_msg = self.safety_limits.validate_order(
+                order_request, positions, market_data
+            )
+            if not is_valid:
+                raise ValueError(f"Safety check failed: {error_msg}")
+
+            logger.info(
+                "Executing market order (FOK): %s $%.4f on token %s", side_upper, size, token_id
+            )
+
+            # Use the proper SDK market-order path: MarketOrderArgsV2 takes *amount* (USDC),
+            # not a price/size pair.  The exchange fills at the best available price(s).
+            order_response = await self.client.post_market_order(
+                token_id=token_id,
+                amount=size,
+                side=side_upper,
+            )
+
+            return {
+                "success": True,
+                "order_id": order_response.get("orderID") if isinstance(order_response, dict) else None,
+                "status": order_response.get("status", "submitted") if isinstance(order_response, dict) else "submitted",
+                "execution_type": "market_order",
+                "details": {
+                    "market_id": market_id,
+                    "token_id": token_id,
+                    "side": side_upper,
+                    "amount_usd": size,
+                    "reference_price": reference_price,
+                    "order_type": "FOK",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                "order_response": order_response,
+            }
 
         except Exception as e:
             logger.error(f"Failed to create market order: {e}")
@@ -634,32 +694,31 @@ class TradingTools:
         try:
             await self.rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
 
-            # Get all orders and find the specific one
-            orders = await self.client.get_orders()
+            # Use direct single-order lookup (O(1)) instead of scanning all orders.
+            order = await self.client.get_order(order_id)
 
-            for order in orders:
-                if order.get("id") == order_id or order.get("orderID") == order_id:
-                    filled_amount = float(order.get("sizeMatched", 0))
-                    total_amount = float(order.get("originalSize", order.get("size", 0)))
+            if not order:
+                return {"success": False, "error": f"Order {order_id} not found", "order_id": order_id}
 
-                    fill_percentage = (
-                        (filled_amount / total_amount * 100) if total_amount > 0 else 0
-                    )
+            filled_amount = float(order.get("sizeMatched", 0))
+            total_amount = float(order.get("originalSize", order.get("size", 0)))
 
-                    return {
-                        "success": True,
-                        "order_id": order_id,
-                        "status": order.get("status", "unknown"),
-                        "fill_status": {
-                            "filled": filled_amount,
-                            "total": total_amount,
-                            "remaining": total_amount - filled_amount,
-                            "fill_percentage": fill_percentage,
-                        },
-                        "details": order,
-                    }
+            fill_percentage = (
+                (filled_amount / total_amount * 100) if total_amount > 0 else 0
+            )
 
-            return {"success": False, "error": f"Order {order_id} not found", "order_id": order_id}
+            return {
+                "success": True,
+                "order_id": order_id,
+                "status": order.get("status", "unknown"),
+                "fill_status": {
+                    "filled": filled_amount,
+                    "total": total_amount,
+                    "remaining": total_amount - filled_amount,
+                    "fill_percentage": fill_percentage,
+                },
+                "details": order,
+            }
 
         except Exception as e:
             logger.error(f"Failed to get order status: {e}")
@@ -805,51 +864,38 @@ class TradingTools:
         self, market_id: str, asset_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Cancel all orders in a specific market.
+        Cancel all open orders in a specific market with a single API call.
+
+        Uses the SDK's ``cancel_market_orders(OrderMarketCancelParams)`` endpoint,
+        which is more efficient than fetching open orders and cancelling them
+        individually.
 
         Args:
             market_id: Market condition ID
-            asset_id: Optional asset/token filter
+            asset_id: Optional token ID filter
 
         Returns:
-            Dict with list of cancelled orders
+            Dict with cancellation response
         """
         try:
             await self.rate_limiter.acquire(EndpointCategory.TRADING_BURST)
 
-            # Get open orders for market
-            orders = await self.client.get_orders(market=market_id, asset_id=asset_id)
+            response = await self.client.cancel_market_orders_by_params(
+                market=market_id, asset_id=asset_id
+            )
 
-            open_orders = [o for o in orders if o.get("status") in ["open", "live", "pending"]]
-
-            if not open_orders:
-                return {
-                    "success": True,
-                    "message": "No open orders to cancel",
-                    "market_id": market_id,
-                    "cancelled_count": 0,
-                }
-
-            # Cancel each order
-            cancelled = []
-            failed = []
-
-            for order in open_orders:
-                order_id = order.get("id") or order.get("orderID")
-                try:
-                    await self.client.cancel_order(order_id)
-                    cancelled.append(order_id)
-                except Exception as e:
-                    logger.error(f"Failed to cancel order {order_id}: {e}")
-                    failed.append({"order_id": order_id, "error": str(e)})
+            cancelled_count = 0
+            if isinstance(response, dict):
+                cancelled_count = len(response.get("cancelled", []))
+            elif isinstance(response, list):
+                cancelled_count = len(response)
 
             return {
                 "success": True,
                 "market_id": market_id,
-                "cancelled_count": len(cancelled),
-                "failed_count": len(failed),
-                "cancelled_orders": cancelled,
-                "failed_orders": failed,
+                "cancelled_count": cancelled_count,
+                "response": response,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
         except Exception as e:
