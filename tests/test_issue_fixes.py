@@ -684,6 +684,51 @@ class TestWalletConfigFlow:
         assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
         assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
 
+    def test_load_config_marks_polymarket_unready_when_env_missing(self):
+        original = {
+            key: os.environ.get(key)
+            for key in (
+                "POLYMARKET_ENV",
+                "POLYMARKET_CHAIN_ID",
+                "POLYMARKET_TEST_CHAIN_ID",
+                "CLOB_API_URL",
+                "GAMMA_API_URL",
+                "CLOB_API_TEST_URL",
+                "GAMMA_API_TEST_URL",
+                "POLYGON_PRIVATE_KEY",
+                "POLYGON_ADDRESS",
+            )
+        }
+
+        for key in (
+            "POLYMARKET_ENV",
+            "POLYMARKET_CHAIN_ID",
+            "POLYMARKET_TEST_CHAIN_ID",
+            "CLOB_API_URL",
+            "GAMMA_API_URL",
+            "CLOB_API_TEST_URL",
+            "GAMMA_API_TEST_URL",
+        ):
+            os.environ.pop(key, None)
+
+        os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
+        os.environ["POLYGON_ADDRESS"] = "0x" + "1" * 40
+
+        try:
+            cfg = load_config()
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        assert cfg.polymarket_ready is False
+        assert cfg.POLYMARKET_CHAIN_ID is None
+        assert cfg.CLOB_API_URL is None
+        assert cfg.GAMMA_API_URL is None
+        assert cfg.polymarket_config_error == "POLYMARKET_ENV is not set"
+
 
 class TestTradingMarketIdCompatibility:
     """Regression tests for accepting Gamma market IDs in trading tools."""
@@ -2556,6 +2601,7 @@ class TestConfiguredHostFailures:
     async def test_market_discovery_does_not_fall_back_from_polytest_gamma_host(self):
         from polymarket_mcp.tools import market_discovery
 
+        original_gamma_url = market_discovery.GAMMA_API_URL
         market_discovery.set_gamma_api_url("https://gcomm-api.polytest.cloud")
 
         mock_response = MagicMock()
@@ -2581,12 +2627,14 @@ class TestConfiguredHostFailures:
         assert requested_urls[0].startswith("https://gcomm-api.polytest.cloud/")
         assert len(requested_urls) == 1
 
-        market_discovery.set_gamma_api_url(None)
+        market_discovery.set_gamma_api_url(original_gamma_url)
 
     @pytest.mark.asyncio
     async def test_market_analysis_does_not_fall_back_from_polytest_gamma_host(self):
         from polymarket_mcp.tools import market_analysis
 
+        original_gamma_url = market_analysis.GAMMA_API_URL
+        original_clob_url = market_analysis.CLOB_API_URL
         market_analysis.set_api_urls("https://gcomm-api.polytest.cloud", "https://clob.polymarket.com")
 
         mock_response = MagicMock()
@@ -2612,12 +2660,14 @@ class TestConfiguredHostFailures:
         assert requested_urls[0].startswith("https://gcomm-api.polytest.cloud/")
         assert len(requested_urls) == 1
 
-        market_analysis.set_api_urls(None, None)
+        market_analysis.set_api_urls(original_gamma_url, original_clob_url)
 
     @pytest.mark.asyncio
     async def test_market_analysis_does_not_fall_back_from_polytest_clob_host(self):
         from polymarket_mcp.tools import market_analysis
 
+        original_gamma_url = market_analysis.GAMMA_API_URL
+        original_clob_url = market_analysis.CLOB_API_URL
         market_analysis.set_api_urls(
             "https://gamma-api.polymarket.com", "https://clob-testnet.polytest.cloud"
         )
@@ -2645,4 +2695,4 @@ class TestConfiguredHostFailures:
         assert requested_urls[0].startswith("https://clob-testnet.polytest.cloud/")
         assert len(requested_urls) == 1
 
-        market_analysis.set_api_urls(None, None)
+        market_analysis.set_api_urls(original_gamma_url, original_clob_url)
