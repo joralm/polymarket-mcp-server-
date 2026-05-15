@@ -635,7 +635,7 @@ class PolymarketClient:
 
         try:
             balance_data = self._fetch_balance_once()
-            return self._refresh_proxy_credentials_on_zero_balance(balance_data)
+            return self._handle_zero_balance_refresh(balance_data)
         except PolyApiException as e:
             if e.status_code == 401:
                 logger.warning(
@@ -679,7 +679,7 @@ class PolymarketClient:
         """Check if L2 API credentials are available"""
         return self.api_creds is not None
 
-    def _refresh_proxy_credentials_on_zero_balance(
+    def _handle_zero_balance_refresh(
         self, balance_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Handle proxy-wallet migration: refresh configured creds once if balance probes as 0.
@@ -742,7 +742,7 @@ class PolymarketClient:
         logger.info("Testing existing API credentials...")
         try:
             balance_probe = self._fetch_balance_once()
-            self._refresh_proxy_credentials_on_zero_balance(balance_probe)
+            self._handle_zero_balance_refresh(balance_probe)
             logger.info("API credentials verified successfully.")
         except PolyApiException as e:
             if e.status_code == 401:

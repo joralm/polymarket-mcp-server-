@@ -1128,6 +1128,7 @@ class TestClobClientSignatureType:
             self_inner._ClobClient__fee_rates = {}
 
         with patch.object(ClobClient, "__init__", fake_clob_init):
+            # Instantiate only to verify the kwargs forwarded into ClobClient.__init__.
             PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,

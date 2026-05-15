@@ -107,7 +107,7 @@ def _extract_cash_balance(balance_data: Any) -> float:
     return 0.0
 
 
-def _get_portfolio_user_address(polymarket_client, config) -> str:
+def _get_portfolio_funder_address(polymarket_client, config) -> str:
     """Return the wallet address whose balance/positions appear in the Polymarket UI."""
     get_funder_address = getattr(polymarket_client, "get_funder_address", None)
     if callable(get_funder_address):
@@ -142,7 +142,7 @@ async def get_all_positions(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Rate limit for data API
         await rate_limiter.acquire(EndpointCategory.DATA_API)
@@ -305,7 +305,7 @@ async def get_position_details(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Fetch position data
         await rate_limiter.acquire(EndpointCategory.DATA_API)
@@ -480,7 +480,7 @@ async def get_portfolio_value(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Get balance
         await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
@@ -622,7 +622,7 @@ async def get_pnl_summary(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Calculate time range
         now = datetime.now()
@@ -848,7 +848,7 @@ async def get_trade_history(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Build query parameters
         params = {
@@ -965,7 +965,7 @@ async def get_activity_log(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Build query parameters
         params = {
@@ -1058,7 +1058,7 @@ async def analyze_portfolio_risk(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Fetch all positions
         await rate_limiter.acquire(EndpointCategory.DATA_API)
@@ -1297,7 +1297,7 @@ async def suggest_portfolio_actions(
     """
     try:
         from ..utils.rate_limiter import EndpointCategory
-        portfolio_user = _get_portfolio_user_address(polymarket_client, config)
+        portfolio_user = _get_portfolio_funder_address(polymarket_client, config)
 
         # Fetch all positions
         await rate_limiter.acquire(EndpointCategory.DATA_API)
