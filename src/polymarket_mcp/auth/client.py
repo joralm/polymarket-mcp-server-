@@ -725,6 +725,20 @@ class PolymarketClient:
         """Check if L2 credentials are present and were successfully verified."""
         return self.api_creds is not None and self._api_credentials_verified
 
+    @staticmethod
+    def _probe_looks_valid(balance_payload: Any) -> bool:
+        """Return True when a balance probe contains recognizable balance fields."""
+        if not isinstance(balance_payload, dict):
+            return False
+        direct_keys = {"balance", "available", "available_balance", "amount", "value"}
+        if any(balance_payload.get(key) is not None for key in direct_keys):
+            return True
+        for nested_key in ("collateral", "usdc", "data", "balance_allowance"):
+            nested = balance_payload.get(nested_key)
+            if isinstance(nested, dict) and any(nested.get(key) is not None for key in direct_keys):
+                return True
+        return False
+
     def _handle_zero_balance_refresh(
         self, balance_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -785,12 +799,15 @@ class PolymarketClient:
             logger.info("No API credentials found. Attempting to create...")
             await self.create_api_credentials()
             post_create_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
-            self._api_credentials_verified = True
+            self._api_credentials_verified = self._probe_looks_valid(post_create_probe)
             logger.debug(
-                "Post-create credential probe result: extracted_balance=%s verified=%s",
+                "Post-create credential probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                self._probe_looks_valid(post_create_probe),
                 self._extract_numeric_balance(post_create_probe),
                 self._api_credentials_verified,
             )
+            if not self._api_credentials_verified:
+                logger.warning("Post-create credential probe returned unexpected payload; keeping unverified.")
             logger.info("API credentials created successfully!")
             return
 
@@ -807,10 +824,15 @@ class PolymarketClient:
             verified_probe = self._handle_zero_balance_refresh(balance_probe)
             self._api_credentials_verified = True
             logger.debug(
-                "Credential verification probe result: extracted_balance=%s verified=%s",
+                "Credential verification probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                self._probe_looks_valid(verified_probe),
                 self._extract_numeric_balance(verified_probe),
                 self._api_credentials_verified,
             )
+            self._api_credentials_verified = self._probe_looks_valid(verified_probe)
+            if not self._api_credentials_verified:
+                logger.warning("Credential probe returned unexpected payload; keeping unverified.")
+                return
             if self._extract_numeric_balance(verified_probe) > 0.0:
                 logger.info("API credentials verified successfully.")
             else:
@@ -827,12 +849,18 @@ class PolymarketClient:
                 logger.warning("API credentials rejected (HTTP 401) — refreshing credentials...")
                 self._refresh_api_credentials()
                 post_refresh_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
-                self._api_credentials_verified = True
+                self._api_credentials_verified = self._probe_looks_valid(post_refresh_probe)
                 logger.debug(
-                    "Post-refresh credential probe result: extracted_balance=%s verified=%s",
+                    "Post-refresh credential probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                    self._probe_looks_valid(post_refresh_probe),
                     self._extract_numeric_balance(post_refresh_probe),
                     self._api_credentials_verified,
                 )
+                if not self._api_credentials_verified:
+                    logger.warning(
+                        "Post-refresh credential probe returned unexpected payload; keeping unverified."
+                    )
+                    return
                 if self._extract_numeric_balance(post_refresh_probe) > 0.0:
                     logger.info("API credentials refreshed and verified successfully.")
                 else:
