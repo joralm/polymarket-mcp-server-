@@ -17,6 +17,9 @@ from py_clob_client_v2.clob_types import (
     AssetType,
     OrderPayload,
     OpenOrderParams,
+    MarketOrderArgsV2,
+    TradeParams,
+    OrderMarketCancelParams,
 )
 from py_clob_client_v2.exceptions import PolyApiException
 
@@ -493,6 +496,162 @@ class PolymarketClient:
 
         except Exception as e:
             logger.error(f"Failed to cancel all orders: {e}")
+            raise
+
+    async def post_market_order(
+        self,
+        token_id: str,
+        amount: float,
+        side: str,
+    ) -> Dict[str, Any]:
+        """
+        Post a true market order (FOK) using the SDK's MarketOrderArgsV2 pattern.
+
+        Unlike limit orders, market orders specify an *amount* of USDC to spend (BUY)
+        or the number of shares to sell (SELL), not a price+size pair.  The CLOB fills
+        at the best available price(s) and cancels any unfilled portion immediately (FOK).
+
+        Args:
+            token_id: CLOB token ID to trade.
+            amount: USDC amount to spend (BUY) or number of shares to sell (SELL).
+            side: ``"BUY"`` or ``"SELL"``.
+
+        Returns:
+            Order response dictionary from the CLOB.
+
+        Raises:
+            RuntimeError: If L2 credentials are not available.
+        """
+        if not self.api_creds:
+            raise RuntimeError(
+                "L2 API credentials required for posting orders. "
+                "Call create_api_credentials() first."
+            )
+
+        try:
+            order_args = MarketOrderArgsV2(
+                token_id=token_id,
+                amount=amount,
+                side=side.upper(),
+            )
+            order_response = self.client.create_and_post_market_order(order_args)
+
+            logger.info(
+                "Market order posted: %s $%.4f (token: %s, order_id: %s)",
+                side.upper(),
+                amount,
+                token_id,
+                order_response.get("orderID") if isinstance(order_response, dict) else None,
+            )
+            return order_response
+
+        except PolyApiException as e:
+            error_text = str(e).lower()
+            if e.status_code == 400 and "maker address not allowed" in error_text:
+                raise RuntimeError(
+                    "Polymarket rejected this maker address for trading. "
+                    "Use a MetaMask-linked Polymarket trading wallet."
+                ) from e
+            logger.error("Failed to post market order: %s", e)
+            raise
+        except Exception as e:
+            logger.error("Failed to post market order: %s", e)
+            raise
+
+    async def get_order(self, order_id: str) -> Dict[str, Any]:
+        """
+        Fetch a single order by ID.
+
+        Args:
+            order_id: The CLOB order ID to look up.
+
+        Returns:
+            Order details dictionary.
+
+        Raises:
+            RuntimeError: If L2 credentials are not available.
+        """
+        if not self.api_creds:
+            raise RuntimeError("L2 API credentials required")
+
+        try:
+            order = self.client.get_order(order_id)
+            return order
+        except Exception as e:
+            logger.error("Failed to fetch order %s: %s", order_id, e)
+            raise
+
+    async def get_trades(
+        self,
+        market: Optional[str] = None,
+        asset_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch the authenticated user's trade history from the CLOB.
+
+        Args:
+            market: Optional market condition ID filter.
+            asset_id: Optional token ID filter.
+
+        Returns:
+            List of trade dictionaries.
+
+        Raises:
+            RuntimeError: If L2 credentials are not available.
+        """
+        if not self.api_creds:
+            raise RuntimeError("L2 API credentials required")
+
+        try:
+            params = TradeParams(market=market, asset_id=asset_id)
+            trades = self.client.get_trades(params)
+            return trades if isinstance(trades, list) else []
+        except Exception as e:
+            logger.error("Failed to fetch trades: %s", e)
+            raise
+
+    async def cancel_market_orders_by_params(
+        self,
+        market: Optional[str] = None,
+        asset_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Cancel all open orders for a market or asset in a single API call.
+
+        This wraps the SDK's ``cancel_market_orders(OrderMarketCancelParams)`` endpoint,
+        which is more efficient than iterating over open orders and cancelling individually.
+
+        Args:
+            market: Market condition ID — cancels all orders in this market.
+            asset_id: Token ID — cancels all orders for this specific token.
+
+        Returns:
+            Cancellation response from the CLOB.
+
+        Raises:
+            RuntimeError: If L2 credentials are not available.
+            ValueError: If neither ``market`` nor ``asset_id`` is provided.
+        """
+        if not self.api_creds:
+            raise RuntimeError("L2 API credentials required")
+
+        if not market and not asset_id:
+            raise ValueError("Either market or asset_id must be provided")
+
+        try:
+            payload = OrderMarketCancelParams(market=market, asset_id=asset_id)
+            response = self.client.cancel_market_orders(payload)
+            logger.info(
+                "Market orders cancelled: market=%s asset_id=%s", market, asset_id
+            )
+            return response
+        except Exception as e:
+            logger.error(
+                "Failed to cancel market orders (market=%s, asset_id=%s): %s",
+                market,
+                asset_id,
+                e,
+            )
             raise
 
     async def get_orders(

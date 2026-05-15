@@ -1953,3 +1953,358 @@ class TestVerifiedCredentialGating:
         finally:
             server_module.polymarket_client = saved["polymarket_client"]
             server_module.config = saved["config"]
+
+
+# ---------------------------------------------------------------------------
+# SDK alignment — market order, direct order lookup, bulk cancel, trades, price history
+# ---------------------------------------------------------------------------
+
+
+class TestSDKAlignment:
+    """
+    Regression tests that verify our code uses the py-clob-client-v2 SDK correctly,
+    matching the patterns in the official Polymarket agents repo and mjunaidca skills.
+    """
+
+    # ------------------------------------------------------------------
+    # Helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_client():
+        """Build a PolymarketClient with a pre-injected set of API credentials."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                api_key="key",
+                api_secret="secret",
+                passphrase="passphrase",
+            )
+        return client
+
+    @staticmethod
+    def _build_trading_tools(mock_clob_client=None):
+        """Build a TradingTools instance with an optional injected PolymarketClient mock."""
+        from polymarket_mcp.utils.safety_limits import SafetyLimits
+
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+        )
+        safety_limits = MagicMock(spec=SafetyLimits)
+        safety_limits.validate_order.return_value = (True, None)
+        safety_limits.should_require_confirmation.return_value = False
+
+        pm_client = mock_clob_client or MagicMock()
+        return TradingTools(client=pm_client, config=config, safety_limits=safety_limits)
+
+    # ------------------------------------------------------------------
+    # 1. Market orders use MarketOrderArgsV2 / create_and_post_market_order
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_post_market_order_calls_create_and_post_market_order(self):
+        """PolymarketClient.post_market_order must delegate to create_and_post_market_order.
+
+        The SDK's create_and_post_market_order(MarketOrderArgsV2(token_id, amount, side))
+        is the correct FOK market-order path — it passes an *amount* of USDC to spend,
+        not a price+size pair.
+        """
+        from py_clob_client_v2.clob_types import MarketOrderArgsV2
+
+        client = self._build_client()
+
+        captured = {}
+
+        class FakeClobClient:
+            def create_and_post_market_order(self_, order_args, **kwargs):
+                captured["order_args"] = order_args
+                return {"orderID": "mkt-001", "status": "matched"}
+
+        client.client = FakeClobClient()
+
+        result = await client.post_market_order(
+            token_id="token-abc", amount=25.0, side="BUY"
+        )
+
+        assert result["orderID"] == "mkt-001"
+        assert isinstance(captured["order_args"], MarketOrderArgsV2)
+        assert captured["order_args"].token_id == "token-abc"
+        assert captured["order_args"].amount == 25.0
+        assert captured["order_args"].side == "BUY"
+
+    @pytest.mark.asyncio
+    async def test_post_market_order_requires_l2_credentials(self):
+        """post_market_order must raise RuntimeError when API creds are absent."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+            )
+        # No credentials set
+        with pytest.raises(RuntimeError, match="L2 API credentials required"):
+            await client.post_market_order("token-abc", 10.0, "BUY")
+
+    @pytest.mark.asyncio
+    async def test_trading_tools_create_market_order_uses_post_market_order(self):
+        """TradingTools.create_market_order must call client.post_market_order, not create_limit_order."""
+        pm_client = AsyncMock()
+        pm_client.get_orderbook = AsyncMock(
+            return_value={
+                "bids": [{"price": "0.55", "size": "500"}],
+                "asks": [{"price": "0.60", "size": "400"}],
+            }
+        )
+        pm_client.get_positions = AsyncMock(return_value=[])
+        pm_client.post_market_order = AsyncMock(
+            return_value={"orderID": "mkt-002", "status": "matched"}
+        )
+
+        tt = self._build_trading_tools(mock_clob_client=pm_client)
+
+        # Patch market resolution
+        tt._get_market_with_gamma_fallback = AsyncMock(
+            return_value={
+                "tokens": [{"token_id": "tok-yes", "outcome": "Yes"}],
+                "volume": "10000",
+            }
+        )
+
+        result = await tt.create_market_order(
+            market_id="0xcondition", side="BUY", size=50.0
+        )
+
+        assert result["success"] is True
+        assert result["execution_type"] == "market_order"
+        # Must have called post_market_order with USDC amount, not shares
+        pm_client.post_market_order.assert_awaited_once()
+        call_kwargs = pm_client.post_market_order.call_args
+        assert call_kwargs.kwargs.get("amount", call_kwargs.args[1] if len(call_kwargs.args) > 1 else None) == 50.0
+
+    @pytest.mark.asyncio
+    async def test_trading_tools_create_market_order_does_not_call_create_limit_order(self):
+        """Verify the old workaround (create_limit_order with FOK) is no longer used."""
+        pm_client = AsyncMock()
+        pm_client.get_orderbook = AsyncMock(
+            return_value={
+                "bids": [{"price": "0.45", "size": "100"}],
+                "asks": [{"price": "0.55", "size": "200"}],
+            }
+        )
+        pm_client.get_positions = AsyncMock(return_value=[])
+        pm_client.post_market_order = AsyncMock(
+            return_value={"orderID": "mkt-003", "status": "matched"}
+        )
+
+        tt = self._build_trading_tools(mock_clob_client=pm_client)
+        tt._get_market_with_gamma_fallback = AsyncMock(
+            return_value={
+                "tokens": [{"token_id": "tok-yes", "outcome": "Yes"}],
+                "volume": "5000",
+            }
+        )
+
+        # Spy on create_limit_order — it should NOT be called for market orders
+        tt.create_limit_order = AsyncMock()
+
+        await tt.create_market_order(market_id="0xcondition", side="BUY", size=30.0)
+
+        tt.create_limit_order.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # 2. Direct order lookup via get_order (not scan-all-orders)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_order_calls_clob_get_order_directly(self):
+        """PolymarketClient.get_order must call client.get_order(order_id) for O(1) lookup."""
+        client = self._build_client()
+
+        class FakeClobClient:
+            def get_order(self_, order_id):
+                return {"id": order_id, "status": "live", "size": "10", "price": "0.55"}
+
+        client.client = FakeClobClient()
+        order = await client.get_order("ord-xyz")
+
+        assert order["id"] == "ord-xyz"
+        assert order["status"] == "live"
+
+    @pytest.mark.asyncio
+    async def test_trading_tools_get_order_status_uses_get_order_not_get_orders(self):
+        """TradingTools.get_order_status must use direct get_order(id), not get_orders() scan."""
+        pm_client = AsyncMock()
+        pm_client.get_order = AsyncMock(
+            return_value={
+                "id": "ord-direct",
+                "status": "live",
+                "size": "100",
+                "sizeMatched": "40",
+                "originalSize": "100",
+            }
+        )
+        # get_orders should NOT be called
+        pm_client.get_orders = AsyncMock()
+
+        tt = self._build_trading_tools(mock_clob_client=pm_client)
+        result = await tt.get_order_status("ord-direct")
+
+        assert result["success"] is True
+        assert result["order_id"] == "ord-direct"
+        assert result["fill_status"]["fill_percentage"] == pytest.approx(40.0)
+        pm_client.get_order.assert_awaited_once_with("ord-direct")
+        pm_client.get_orders.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # 3. Trade history via get_trades
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_trades_calls_clob_get_trades(self):
+        """PolymarketClient.get_trades must call client.get_trades(TradeParams)."""
+        from py_clob_client_v2.clob_types import TradeParams
+
+        client = self._build_client()
+        captured = {}
+
+        class FakeClobClient:
+            def get_trades(self_, params=None, **kwargs):
+                captured["params"] = params
+                return [{"tradeID": "t1"}, {"tradeID": "t2"}]
+
+        client.client = FakeClobClient()
+        trades = await client.get_trades(market="0xmarket", asset_id="0xtoken")
+
+        assert len(trades) == 2
+        assert captured["params"].market == "0xmarket"
+        assert captured["params"].asset_id == "0xtoken"
+        assert isinstance(captured["params"], TradeParams)
+
+    @pytest.mark.asyncio
+    async def test_get_trades_requires_l2_credentials(self):
+        """get_trades must raise RuntimeError when API creds are absent."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+            )
+        with pytest.raises(RuntimeError, match="L2 API credentials required"):
+            await client.get_trades()
+
+    # ------------------------------------------------------------------
+    # 4. Bulk market cancel via cancel_market_orders (single API call)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_cancel_market_orders_by_params_calls_sdk_endpoint(self):
+        """PolymarketClient.cancel_market_orders_by_params must call cancel_market_orders(OrderMarketCancelParams)."""
+        from py_clob_client_v2.clob_types import OrderMarketCancelParams
+
+        client = self._build_client()
+        captured = {}
+
+        class FakeClobClient:
+            def cancel_market_orders(self_, payload):
+                captured["payload"] = payload
+                return {"cancelled": ["ord-1", "ord-2"]}
+
+        client.client = FakeClobClient()
+        response = await client.cancel_market_orders_by_params(market="0xmarket")
+
+        assert isinstance(captured["payload"], OrderMarketCancelParams)
+        assert captured["payload"].market == "0xmarket"
+        assert response["cancelled"] == ["ord-1", "ord-2"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_market_orders_by_params_requires_market_or_asset(self):
+        """cancel_market_orders_by_params must raise ValueError when neither market nor asset_id is given."""
+        client = self._build_client()
+        with pytest.raises(ValueError, match="Either market or asset_id must be provided"):
+            await client.cancel_market_orders_by_params()
+
+    @pytest.mark.asyncio
+    async def test_trading_tools_cancel_market_orders_uses_single_api_call(self):
+        """TradingTools.cancel_market_orders must use cancel_market_orders_by_params (not loop)."""
+        pm_client = AsyncMock()
+        pm_client.cancel_market_orders_by_params = AsyncMock(
+            return_value={"cancelled": ["ord-a", "ord-b"]}
+        )
+        # get_orders must NOT be called when we use the single-call path
+        pm_client.get_orders = AsyncMock()
+
+        tt = self._build_trading_tools(mock_clob_client=pm_client)
+        result = await tt.cancel_market_orders(market_id="0xcondition")
+
+        assert result["success"] is True
+        pm_client.cancel_market_orders_by_params.assert_awaited_once_with(
+            market="0xcondition", asset_id=None
+        )
+        pm_client.get_orders.assert_not_awaited()
+
+    # ------------------------------------------------------------------
+    # 5. Price history uses real /prices-history endpoint (not stub)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_price_history_calls_prices_history_endpoint(self):
+        """get_price_history must call /prices-history, not return a stub error."""
+        from polymarket_mcp.tools import market_analysis
+
+        history_payload = {"history": [{"t": 1700000000, "p": 0.55}, {"t": 1700003600, "p": 0.57}]}
+
+        with patch.object(
+            market_analysis, "_fetch_clob_api", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = history_payload
+            result = await market_analysis.get_price_history("token-xyz", resolution="1h")
+
+        # Must have called the real endpoint
+        mock_fetch.assert_awaited_once()
+        endpoint_called = mock_fetch.call_args.args[0]
+        assert endpoint_called == "/prices-history"
+        # Result must be the history list, not an error dict
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["p"] == 0.55
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("resolution,expected_interval", [
+        ("1h", "1h"),
+        ("6h", "6h"),
+        ("1d", "1d"),
+        ("1w", "1w"),
+        ("max", "max"),
+    ])
+    async def test_get_price_history_passes_interval_for_standard_resolutions(
+        self, resolution, expected_interval
+    ):
+        """Each recognised resolution string must be forwarded as interval= to the CLOB."""
+        from polymarket_mcp.tools import market_analysis
+
+        with patch.object(
+            market_analysis, "_fetch_clob_api", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = {"history": []}
+            await market_analysis.get_price_history("token-xyz", resolution=resolution)
+
+        _, params = mock_fetch.call_args.args
+        assert params.get("interval") == expected_interval, (
+            f"resolution={resolution!r} should produce interval={expected_interval!r}, "
+            f"got {params.get('interval')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_price_history_does_not_return_stub_error(self):
+        """get_price_history must never return the old 'not available' stub error dict."""
+        from polymarket_mcp.tools import market_analysis
+
+        with patch.object(
+            market_analysis, "_fetch_clob_api", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = {"history": []}
+            result = await market_analysis.get_price_history("token-xyz")
+
+        for item in result:
+            assert "Historical price data not available" not in str(item)
+            assert "error" not in item or "Historical price data" not in item.get("error", "")
