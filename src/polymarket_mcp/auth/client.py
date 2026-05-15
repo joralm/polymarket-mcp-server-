@@ -982,6 +982,64 @@ class PolymarketClient:
 
         return balance_data
 
+    def _reconcile_configured_api_key_with_signer(self) -> None:
+        """Replace configured credentials when they don't match signer-derived API key."""
+        if not self.api_creds or not self._api_creds_from_config:
+            return
+
+        derive_fn = getattr(self.client, "create_or_derive_api_key", None)
+        if not callable(derive_fn):
+            return
+
+        try:
+            derived = derive_fn()
+        except Exception as exc:
+            logger.warning(
+                "Could not reconcile configured API key with signer-derived credentials: %s",
+                exc,
+            )
+            logger.debug("API-key reconciliation exception details", exc_info=True)
+            return
+
+        derived_api_key = getattr(derived, "api_key", None)
+        if not derived_api_key:
+            logger.warning(
+                "Signer-derived API credential probe returned no api_key; keeping configured credentials."
+            )
+            return
+
+        if derived_api_key == self.api_creds.api_key:
+            logger.debug("Configured API key already matches signer-derived wallet credentials.")
+            return
+
+        logger.warning(
+            "Configured API key does not belong to signer %s; replacing with signer-derived credentials.",
+            self.address,
+        )
+        self.api_creds = ApiCreds(
+            api_key=derived.api_key,
+            api_secret=derived.api_secret,
+            api_passphrase=derived.api_passphrase,
+        )
+        self._api_creds_from_config = False
+        self._api_credentials_verified = False
+
+        set_api_creds_fn = getattr(self.client, "set_api_creds", None)
+        if callable(set_api_creds_fn):
+            set_api_creds_fn(self.api_creds)
+        else:
+            self._initialize_client()
+
+        _log_new_credentials(
+            api_key=self.api_creds.api_key,
+            api_secret=self.api_creds.api_secret,
+            passphrase=self.api_creds.api_passphrase,
+            reason=(
+                "Configured API key belonged to a different wallet — replaced "
+                "with signer-derived credentials"
+            ),
+        )
+
     async def ensure_valid_api_credentials(self) -> None:
         """
         Ensure that L2 API credentials are present and valid.
@@ -1021,6 +1079,7 @@ class PolymarketClient:
 
         logger.info("Testing existing API credentials...")
         try:
+            self._reconcile_configured_api_key_with_signer()
             logger.debug(
                 "Credential verification start: signer=%s funder=%s signature_type=%s has_l2=%s",
                 self.address,

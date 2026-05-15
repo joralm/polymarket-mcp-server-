@@ -1848,6 +1848,25 @@ class TestEnsureValidApiCredentials:
         assert client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
+    async def test_configured_creds_from_different_wallet_are_reconciled_before_probe(self):
+        """Startup must replace env creds if signer-derived API key differs."""
+        client = self._make_client(with_creds=True)
+        client.client.create_or_derive_api_key.return_value = ApiCreds(
+            api_key="derived-key",
+            api_secret="derived-secret",
+            api_passphrase="derived-pass",
+        )
+        client.client.set_api_creds = MagicMock()
+
+        with patch.object(client, "_fetch_balance_once", return_value={"balance": "10.0"}):
+            await client.ensure_valid_api_credentials()
+
+        client.client.set_api_creds.assert_called_once()
+        assert client.api_creds.api_key == "derived-key"
+        assert client._api_creds_from_config is False
+        assert client.has_verified_api_credentials()
+
+    @pytest.mark.asyncio
     async def test_stale_creds_401_triggers_refresh(self):
         """On HTTP 401, existing credentials must be refreshed at startup."""
         from py_clob_client_v2.exceptions import PolyApiException
