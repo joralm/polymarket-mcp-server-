@@ -1,6 +1,6 @@
 # Polymarket MCP Server - Tools Reference
 
-## Complete Tool Inventory (30 Tools)
+## Complete Tool Inventory (46 Tools)
 
 ### Phase 1: Trading Tools (12 tools) ✅
 Previously implemented by other agents.
@@ -133,6 +133,33 @@ Get sports betting markets. Filter by sport type if specified.
 }
 ```
 Get cryptocurrency-related markets. Filter by symbol if specified.
+
+---
+
+### Phase 2.5: Server Status (1 tool) ✅ NEW
+
+**1. get_server_status**
+```json
+{
+  "name": "get_server_status",
+  "parameters": {},
+  "returns": {
+    "status": "connected|disconnected",
+    "environment": "mainnet|testnet",
+    "wallet_address": "0x...",
+    "network": "Polygon Mainnet|Polygon Amoy",
+    "available_balance_usdc": "string|null",
+    "chain_id": "integer",
+    "endpoints": {
+      "clob_api": "string",
+      "gamma_api": "string"
+    },
+    "authenticated": "boolean"
+  }
+}
+```
+
+Use this tool as the first health check in an agent session to verify the active environment and available balance before placing any orders.
 
 ---
 
@@ -473,7 +500,7 @@ if analysis.recommendation == "BUY":
 
 ---
 
-**Total Tools**: 30 (12 trading + 18 market)
+**Total Tools**: 46 (8 discovery + 10 analysis + 1 status + 12 trading + 8 portfolio + 7 realtime)
 **Status**: Production Ready ✅
 **API**: Real Polymarket integration (NO MOCKS)
 **Tests**: Comprehensive coverage
