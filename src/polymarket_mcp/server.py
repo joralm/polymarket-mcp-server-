@@ -176,7 +176,7 @@ async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
         timeout = httpx.Timeout(
             connect=GEOBLOCK_CONNECT_TIMEOUT_SECONDS,
             read=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
-            write=None,
+            write=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
             pool=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
         )
         async with httpx.AsyncClient(timeout=timeout) as client:
