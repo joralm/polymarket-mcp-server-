@@ -20,9 +20,9 @@ class PolymarketConfig(BaseSettings):
     MAINNET_CHAIN_ID: ClassVar[int] = 137
     TESTNET_CHAIN_ID: ClassVar[int] = 80002
     MAINNET_CLOB_URL: ClassVar[str] = "https://clob.polymarket.com"
-    TESTNET_CLOB_URL: ClassVar[str] = "https://clob-testnet.polytest.cloud"
+    TESTNET_CLOB_URL: ClassVar[str] = "https://clob.polymarket.com"
     MAINNET_GAMMA_URL: ClassVar[str] = "https://gamma-api.polymarket.com"
-    TESTNET_GAMMA_URL: ClassVar[str] = "https://gcomm-api.polytest.cloud"
+    TESTNET_GAMMA_URL: ClassVar[str] = "https://gamma-api.polymarket.com"
 
     # DEMO MODE - Run without real credentials (read-only)
     DEMO_MODE: bool = Field(

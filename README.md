@@ -243,7 +243,7 @@ POLYMARKET_ENV=mainnet
 
 **Environment switch (recommended):**
 - `POLYMARKET_ENV=mainnet` → Chain `137`, CLOB `https://clob.polymarket.com`, Gamma `https://gamma-api.polymarket.com`
-- `POLYMARKET_ENV=testnet` → Chain `80002`, CLOB `https://clob-testnet.polytest.cloud`, Gamma `https://gcomm-api.polytest.cloud`
+- `POLYMARKET_ENV=testnet` → Chain `80002`, CLOB `https://clob.polymarket.com`, Gamma `https://gamma-api.polymarket.com`
 - You can still override `POLYMARKET_CHAIN_ID`, `CLOB_API_URL`, and `GAMMA_API_URL` explicitly.
 
 **Supported trading flow (important):**

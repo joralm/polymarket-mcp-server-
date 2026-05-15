@@ -613,8 +613,8 @@ class TestWalletConfigFlow:
         )
 
         assert cfg.POLYMARKET_CHAIN_ID == 80002
-        assert cfg.CLOB_API_URL == "https://clob-testnet.polytest.cloud"
-        assert cfg.GAMMA_API_URL == "https://gcomm-api.polytest.cloud"
+        assert cfg.CLOB_API_URL == "https://clob.polymarket.com"
+        assert cfg.GAMMA_API_URL == "https://gamma-api.polymarket.com"
 
     def test_config_keeps_explicit_overrides_in_testnet(self):
         cfg = PolymarketConfig(
@@ -1455,8 +1455,8 @@ class TestMarketAnalysisIdentifierCompatibility:
         fake_config = MagicMock()
         fake_config.POLYMARKET_ENV = "testnet"
         fake_config.POLYMARKET_CHAIN_ID = 80002
-        fake_config.CLOB_API_URL = "https://clob-testnet.polytest.cloud"
-        fake_config.GAMMA_API_URL = "https://gcomm-api.polytest.cloud"
+        fake_config.CLOB_API_URL = "https://clob.polymarket.com"
+        fake_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
         fake_config.effective_funder = "0x" + "2" * 40
 
         fake_client = MagicMock()
