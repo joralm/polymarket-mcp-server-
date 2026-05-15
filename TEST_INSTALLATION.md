@@ -259,11 +259,12 @@ from polymarket_mcp.config import load_config
 
 config = load_config()
 print(f"DEMO_MODE: {config.DEMO_MODE}")
-print(f"Address: {config.POLYGON_ADDRESS}")
-print(f"Key (first 10 chars): {config.POLYGON_PRIVATE_KEY[:10]}")
+print(f"Address: {config.POLYGON_ADDRESS!r}")
+print(f"Key: {config.POLYGON_PRIVATE_KEY!r}")
 
 assert config.DEMO_MODE == True, "DEMO_MODE should be True"
-assert config.POLYGON_ADDRESS == "0x0000000000000000000000000000000000000001", "Should use demo address"
+assert config.POLYGON_ADDRESS == "", "Demo mode should not auto-populate a wallet address"
+assert config.POLYGON_PRIVATE_KEY == "", "Demo mode should not auto-populate a private key"
 print("✓ DEMO mode configuration valid")
 PYEOF
 ```

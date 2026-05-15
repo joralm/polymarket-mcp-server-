@@ -131,9 +131,19 @@ class PolymarketConfig(BaseSettings):
         # Get DEMO_MODE from the data being validated
         demo_mode = info.data.get("DEMO_MODE", False)
 
-        # In DEMO mode, use a fixed demo private key
+        # In DEMO mode, wallet credentials are optional and never auto-filled
         if demo_mode:
-            return "0000000000000000000000000000000000000000000000000000000000000001"
+            if not v:
+                return ""
+            if v.startswith("0x"):
+                v = v[2:]
+            if len(v) != 64:
+                raise ValueError("POLYGON_PRIVATE_KEY must be 64 hex characters when provided")
+            try:
+                int(v, 16)
+            except ValueError:
+                raise ValueError("POLYGON_PRIVATE_KEY must be valid hex")
+            return v
 
         # Normal validation for non-demo mode
         if not v:
@@ -159,9 +169,15 @@ class PolymarketConfig(BaseSettings):
         # Get DEMO_MODE from the data being validated
         demo_mode = info.data.get("DEMO_MODE", False)
 
-        # In DEMO mode, use a fixed demo address
+        # In DEMO mode, wallet address is optional and never auto-filled
         if demo_mode:
-            return "0x0000000000000000000000000000000000000001"
+            if not v:
+                return ""
+            if not v.startswith("0x"):
+                raise ValueError("POLYGON_ADDRESS must start with 0x")
+            if len(v) != 42:
+                raise ValueError("POLYGON_ADDRESS must be 42 characters")
+            return v.lower()
 
         # Normal validation for non-demo mode
         if not v:
