@@ -153,6 +153,7 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
             return value
         if isinstance(value, str):
             normalized = value.strip().lower()
+            logger.debug("Geoblock key '%s' returned string value '%s'", key, value)
             if normalized in {"true", "1"}:
                 return True
             if normalized in {"false", "0"}:
@@ -175,7 +176,7 @@ async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
         timeout = httpx.Timeout(
             connect=GEOBLOCK_CONNECT_TIMEOUT_SECONDS,
             read=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
-            write=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
+            write=None,
             pool=GEOBLOCK_CHECK_TIMEOUT_SECONDS,
         )
         async with httpx.AsyncClient(timeout=timeout) as client:
