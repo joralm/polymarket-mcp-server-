@@ -332,10 +332,6 @@ async def get_position_details(
         position = positions[0]
         token_id = position.get('asset_id')
 
-        # Fetch market details
-        await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
-        await polymarket_client.get_market(market_id)
-
         # Fetch current orderbook
         await rate_limiter.acquire(EndpointCategory.MARKET_DATA)
         orderbook = await polymarket_client.get_orderbook(token_id)

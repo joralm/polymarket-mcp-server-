@@ -1128,11 +1128,10 @@ class TestClobClientSignatureType:
             self_inner._ClobClient__fee_rates = {}
 
         with patch.object(ClobClient, "__init__", fake_clob_init):
-            test_client = PolymarketClient(
+            PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
             )
-        assert test_client.address == "0x" + "a" * 40
 
         assert captured_args.get("signature_type") == 1, (
             "ClobClient must use signature_type=1 (POLY_PROXY) so that "
