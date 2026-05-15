@@ -1457,6 +1457,25 @@ class TestMarketAnalysisIdentifierCompatibility:
             assert params.get("closed") == "false"
 
     @pytest.mark.asyncio
+    async def test_closing_soon_handles_iso_z_dates_without_timezone_warning(self, caplog):
+        """Closing-soon filtering should compare timezone-aware datetimes safely."""
+        from polymarket_mcp.tools import market_discovery
+
+        with patch.object(
+            market_discovery, "_fetch_gamma_markets", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = [
+                {
+                    "question": "soon market",
+                    "end_date_iso": (datetime.utcnow() + timedelta(hours=2)).isoformat() + "Z",
+                }
+            ]
+            results = await market_discovery.get_closing_soon_markets(hours=24, limit=5)
+
+        assert len(results) == 1
+        assert "offset-naive and offset-aware datetimes" not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_sports_markets_sends_closed_false(self):
         """get_sports_markets must include closed=false."""
         from polymarket_mcp.tools import market_discovery

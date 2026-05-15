@@ -744,8 +744,16 @@ class PolymarketClient:
         logger.info("Testing existing API credentials...")
         try:
             balance_probe = self._fetch_balance_once()
-            self._handle_zero_balance_refresh(balance_probe)
-            logger.info("API credentials verified successfully.")
+            verified_probe = self._handle_zero_balance_refresh(balance_probe)
+            if self._extract_numeric_balance(verified_probe) > 0.0:
+                logger.info("API credentials verified successfully.")
+            else:
+                logger.warning(
+                    "API credentials were accepted, but spendable USDC balance is 0 for funder %s. "
+                    "If your Polymarket UI shows funds, set POLYMARKET_FUNDER to your actual "
+                    "deposit/proxy wallet address and keep POLYMARKET_SIGNATURE_TYPE aligned with your wallet type.",
+                    self.funder_address,
+                )
         except PolyApiException as e:
             if e.status_code == 401:
                 logger.warning("API credentials rejected (HTTP 401) — refreshing credentials...")

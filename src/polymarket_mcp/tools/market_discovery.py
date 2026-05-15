@@ -15,7 +15,7 @@ Provides 8 tools for discovering and filtering markets:
 import json
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import mcp.types as types
 import httpx
 
@@ -25,6 +25,23 @@ logger = logging.getLogger(__name__)
 
 # Gamma API base URL
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
+
+
+def _parse_market_end_datetime(end_date: Any) -> Optional[datetime]:
+    """Parse market end-date values into timezone-aware UTC datetimes."""
+    if end_date in (None, ""):
+        return None
+    try:
+        if isinstance(end_date, str):
+            parsed = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        else:
+            parsed = datetime.fromtimestamp(int(end_date), tz=timezone.utc)
+    except Exception:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 async def _fetch_gamma_markets(
@@ -133,22 +150,14 @@ async def get_trending_markets(timeframe: str = "24h", limit: int = 10) -> List[
         )
 
         # Filter out markets with end_date_iso in the past
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         current_markets = []
         for m in markets:
             end_date = m.get("end_date_iso") or m.get("endDate")
             if end_date:
-                try:
-                    if isinstance(end_date, str):
-                        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00")).replace(
-                            tzinfo=None
-                        )
-                    else:
-                        end_dt = datetime.fromtimestamp(int(end_date))
-                    if end_dt <= now:
-                        continue
-                except Exception:
-                    pass
+                end_dt = _parse_market_end_datetime(end_date)
+                if end_dt and end_dt <= now:
+                    continue
             current_markets.append(m)
 
         # Sort by volume based on timeframe
@@ -260,22 +269,14 @@ async def get_featured_markets(limit: int = 10) -> List[Dict[str, Any]]:
         markets = await _fetch_gamma_markets("/markets", params, limit)
 
         # Filter out markets with end_date_iso in the past
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         current_markets = []
         for m in markets:
             end_date = m.get("end_date_iso") or m.get("endDate")
             if end_date:
-                try:
-                    if isinstance(end_date, str):
-                        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00")).replace(
-                            tzinfo=None
-                        )
-                    else:
-                        end_dt = datetime.fromtimestamp(int(end_date))
-                    if end_dt <= now:
-                        continue
-                except Exception:
-                    pass
+                end_dt = _parse_market_end_datetime(end_date)
+                if end_dt and end_dt <= now:
+                    continue
             current_markets.append(m)
         markets = current_markets
 
@@ -305,7 +306,7 @@ async def get_closing_soon_markets(hours: int = 24, limit: int = 20) -> List[Dic
     """
     try:
         # Calculate cutoff time
-        cutoff_time = datetime.utcnow() + timedelta(hours=hours)
+        cutoff_time = datetime.now(timezone.utc) + timedelta(hours=hours)
 
         # Fetch active, non-closed markets
         markets = await _fetch_gamma_markets(
@@ -317,20 +318,12 @@ async def get_closing_soon_markets(hours: int = 24, limit: int = 20) -> List[Dic
         for market in markets:
             end_date = market.get("endDate") or market.get("end_date_iso")
             if end_date:
-                # Parse ISO date or timestamp
-                try:
-                    if isinstance(end_date, str):
-                        end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                    else:
-                        end_dt = datetime.fromtimestamp(int(end_date))
-
-                    # Check if closing within timeframe
-                    if end_dt <= cutoff_time:
-                        closing_soon.append(market)
-
-                except Exception as parse_error:
-                    logger.warning(f"Failed to parse end_date: {end_date}, error: {parse_error}")
+                end_dt = _parse_market_end_datetime(end_date)
+                if end_dt is None:
+                    logger.warning(f"Failed to parse end_date: {end_date}, error: invalid datetime")
                     continue
+                if end_dt <= cutoff_time:
+                    closing_soon.append(market)
 
         # Sort by end date (soonest first)
         closing_soon.sort(key=lambda m: m.get("endDate", m.get("end_date_iso", "")))
