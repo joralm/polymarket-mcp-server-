@@ -63,6 +63,42 @@ def _has_authenticated_trading_access() -> bool:
     return bool(polymarket_client.has_api_credentials())
 
 
+def _log_docker_login_report() -> None:
+    """Emit a startup report showing Docker auth inputs and effective trading readiness."""
+    if not config:
+        return
+
+    has_api_key = bool(config.POLYMARKET_API_KEY)
+    has_api_secret = bool(config.POLYMARKET_API_SECRET)
+    has_passphrase = bool(config.POLYMARKET_PASSPHRASE)
+    has_l2_triplet = has_api_key and (has_api_secret or has_passphrase)
+    full_mode = _has_authenticated_trading_access()
+
+    logger.info("DOCKER LOGIN REPORT")
+    logger.info("  signer (POLYGON_ADDRESS): %s", config.POLYGON_ADDRESS)
+    logger.info("  funder (POLYMARKET_FUNDER/effective): %s", config.effective_funder)
+    logger.info("  signature_type: %s", config.POLYMARKET_SIGNATURE_TYPE)
+    logger.info(
+        "  api creds configured: key=%s secret=%s passphrase=%s (triplet_ready=%s)",
+        has_api_key,
+        has_api_secret,
+        has_passphrase,
+        has_l2_triplet,
+    )
+    logger.info("  auth verified: %s", full_mode)
+    logger.info("  FULL mode (trading enabled): %s", full_mode)
+    if not full_mode:
+        logger.info("  To enable FULL mode in Docker, ensure:")
+        logger.info("    1) POLYGON_PRIVATE_KEY matches POLYGON_ADDRESS")
+        logger.info("    2) POLYMARKET_FUNDER is the wallet that holds UI funds/positions")
+        logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
+        logger.info(
+            "    4) L2 API credentials are valid or allow auto-derivation on startup "
+            "(POLYMARKET_API_KEY/POLYMARKET_API_SECRET/POLYMARKET_PASSPHRASE)"
+        )
+        logger.info("    5) LOG_LEVEL=DEBUG to inspect auth diagnostics")
+
+
 class StreamableHTTPASGIApp:
     """ASGI adapter for MCP Streamable HTTP transport."""
 
@@ -480,6 +516,8 @@ async def initialize_server() -> None:
             logger.info("Mode: READ-ONLY (no API credentials)")
             logger.info("Available tools: 25 total (8 Discovery, 10 Analysis, 7 Real-time)")
             logger.info("Trading and Portfolio tools require API credentials")
+
+        _log_docker_login_report()
 
     except Exception as e:
         logger.exception("Failed to initialize server: %s", e)

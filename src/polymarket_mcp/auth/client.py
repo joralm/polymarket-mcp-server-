@@ -822,7 +822,6 @@ class PolymarketClient:
             )
             balance_probe = self._fetch_balance_once()
             verified_probe = self._handle_zero_balance_refresh(balance_probe)
-            self._api_credentials_verified = True
             logger.debug(
                 "Credential verification probe result: looks_valid=%s extracted_balance=%s verified=%s",
                 self._probe_looks_valid(verified_probe),
