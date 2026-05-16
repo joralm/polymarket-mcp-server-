@@ -33,6 +33,7 @@ WORKDIR /app
 # Install runtime dependencies only
 COPY --from=builder /build/dist/*.whl .
 RUN pip install --no-cache-dir *.whl && \
+    pip install --no-cache-dir "redis>=5.0.0" && \
     rm -f *.whl && \
     pip cache purge
 
