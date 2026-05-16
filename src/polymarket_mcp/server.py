@@ -618,12 +618,16 @@ async def initialize_server() -> None:
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        geoblocked = await _check_geoblock_status(config.POLYMARKET_GEOBLOCK_URL)
-        if geoblocked is True:
-            raise RuntimeError(
-                "Startup aborted: this server location is geoblocked by Polymarket "
-                "(/api/geoblock endpoint)"
-            )
+        geoblock_url = getattr(config, "POLYMARKET_GEOBLOCK_URL", None)
+        if geoblock_url:
+            geoblocked = await _check_geoblock_status(geoblock_url)
+            if geoblocked is True:
+                raise RuntimeError(
+                    "Startup aborted: this server location is geoblocked by Polymarket "
+                    "(/api/geoblock endpoint)"
+                )
+        else:
+            logger.info("POLYMARKET_GEOBLOCK_URL not set; skipping startup geoblock check")
 
         if not polymarket_ready:
             logger.warning(

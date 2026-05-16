@@ -736,7 +736,7 @@ class TestWalletConfigFlow:
         assert cfg.GAMMA_API_URL is None
         assert cfg.polymarket_config_error == "POLYMARKET_ENV is not set"
 
-    def test_load_config_requires_geoblock_url(self):
+    def test_load_config_allows_missing_geoblock_url(self):
         original = {
             key: os.environ.get(key)
             for key in (
@@ -759,8 +759,8 @@ class TestWalletConfigFlow:
         os.environ["POLYGON_ADDRESS"] = "0x" + "1" * 40
 
         try:
-            with pytest.raises(ValueError, match="POLYMARKET_GEOBLOCK_URL is required"):
-                load_config()
+            cfg = load_config()
+            assert cfg.POLYMARKET_GEOBLOCK_URL is None
         finally:
             for key, value in original.items():
                 if value is None:
@@ -2384,6 +2384,65 @@ class TestEnsureValidApiCredentials:
                 await server_module.initialize_server()
 
             mock_geoblock.assert_awaited_once_with(mock_config.POLYMARKET_GEOBLOCK_URL)
+            mock_create.assert_called_once()
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_skips_geoblock_check_when_url_missing(self):
+        """initialize_server() should skip geoblock check when URL is not configured."""
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        mock_client = MagicMock(spec=PolymarketClient)
+        mock_client.has_api_credentials.return_value = True
+        mock_client.ensure_valid_api_credentials = AsyncMock()
+
+        mock_config = MagicMock()
+        mock_config.POLYGON_PRIVATE_KEY = "0x" + "a" * 64
+        mock_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        mock_config.POLYMARKET_CHAIN_ID = 137
+        mock_config.POLYMARKET_API_KEY = "k"
+        mock_config.POLYMARKET_API_SECRET = "s"
+        mock_config.POLYMARKET_PASSPHRASE = "p"
+        mock_config.POLYMARKET_ENV = "mainnet"
+        mock_config.CLOB_API_URL = "https://clob.polymarket.com"
+        mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYMARKET_GEOBLOCK_URL = None
+        mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
+        mock_config.WS_ENABLED = False
+        mock_config.LOG_LEVEL = "INFO"
+        mock_config.DEMO_MODE = False
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=mock_config),
+                patch(
+                    "polymarket_mcp.server.get_polymarket_runtime_state", return_value=(True, None)
+                ),
+                patch(
+                    "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
+                ) as mock_geoblock,
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                ) as mock_create,
+                patch("polymarket_mcp.server.create_safety_limits_from_config"),
+                patch("polymarket_mcp.server.get_rate_limiter"),
+                patch("polymarket_mcp.server.TradingTools"),
+            ):
+                await server_module.initialize_server()
+
+            mock_geoblock.assert_not_awaited()
             mock_create.assert_called_once()
         finally:
             for key, val in saved.items():
