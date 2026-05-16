@@ -41,8 +41,9 @@ class TestMemoryCache:
     async def test_ttl_expiry(self):
         cache = MemoryCache()
         await cache.set("key_ttl", "value", ttl_seconds=0)
-        # With ttl=0 the entry expires immediately (monotonic() + 0 <= now)
-        # Sleep a tiny bit to ensure expiry
+        # With ttl=0 the expiry is set to monotonic() + 0. On the next call
+        # monotonic() >= expires_at so the entry is treated as expired.
+        # Sleep a tiny bit to ensure the clock has strictly advanced past it.
         await asyncio.sleep(0.01)
         result = await cache.get("key_ttl")
         assert result is None

@@ -702,7 +702,7 @@ async def initialize_server() -> None:
         logger.info("Initializing cache backend...")
         cache = create_cache()
         portfolio_integration._set_portfolio_cache(cache)
-        logger.info("Cache backend initialised: %s", type(cache).__name__)
+        logger.info("Cache backend initialized: %s", type(cache).__name__)
 
         # Initialize trading tools (only if authenticated)
         if _has_authenticated_trading_access():
