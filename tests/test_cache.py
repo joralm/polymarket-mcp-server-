@@ -14,7 +14,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from polymarket_mcp.cache.memory import MemoryCache
-from polymarket_mcp.cache.factory import create_cache
+from polymarket_mcp.cache.factory import create_cache, _resolve_redis_url
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +222,32 @@ class TestCreateCache:
     def test_empty_redis_url_returns_memory_cache(self):
         cache = create_cache(redis_url="")
         assert isinstance(cache, MemoryCache)
+
+    def test_resolve_redis_url_from_host_and_port(self):
+        with patch.dict(
+            os.environ,
+            {"REDIS_HOST": "redis", "REDIS_PORT": "6379"},
+            clear=True,
+        ):
+            assert _resolve_redis_url(redis_url=None) == "redis://redis:6379/0"
+
+    def test_resolve_redis_url_prefers_explicit_url(self):
+        with patch.dict(
+            os.environ,
+            {"REDIS_URL": "redis://from-env:6379/0", "REDIS_HOST": "redis", "REDIS_PORT": "6379"},
+            clear=True,
+        ):
+            assert _resolve_redis_url(redis_url=None) == "redis://from-env:6379/0"
+
+    def test_incomplete_redis_host_port_logs_clear_warning_and_uses_memory(self, caplog):
+        with patch.dict(os.environ, {"REDIS_HOST": "redis"}, clear=True):
+            with caplog.at_level("WARNING"):
+                cache = create_cache()
+        assert isinstance(cache, MemoryCache)
+        assert (
+            "Incomplete Redis config: set REDIS_URL, or set both REDIS_HOST and REDIS_PORT"
+            in caplog.text
+        )
 
     def test_explicit_empty_string_overrides_env(self):
         """Passing redis_url='' forces memory backend even if env is set."""

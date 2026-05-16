@@ -1,9 +1,11 @@
 """
 Cache backend factory.
 
-Reads ``REDIS_URL`` from the environment to decide which backend to use:
+Reads Redis configuration from environment variables to decide which backend
+to use:
 
-- If ``REDIS_URL`` is set **and** the ``redis`` package is installed, a
+- If ``REDIS_URL`` is set (or can be derived from ``REDIS_HOST`` +
+  ``REDIS_PORT``) **and** the ``redis`` package is installed, a
   ``RedisCache`` is returned after a connectivity probe.  If the probe
   fails the factory logs a warning and falls back to ``MemoryCache``.
 - Otherwise ``MemoryCache`` is returned (the safe default).
@@ -19,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # Environment variable that activates Redis caching
 _REDIS_URL_ENV = "REDIS_URL"
+_REDIS_HOST_ENV = "REDIS_HOST"
+_REDIS_PORT_ENV = "REDIS_PORT"
 
 
 def create_cache(redis_url: str | None = None) -> CacheBackend:
@@ -38,10 +42,13 @@ def create_cache(redis_url: str | None = None) -> CacheBackend:
         A ``RedisCache`` if Redis is configured and reachable, otherwise a
         ``MemoryCache``.
     """
-    url = redis_url if redis_url is not None else os.environ.get(_REDIS_URL_ENV, "")
+    url = _resolve_redis_url(redis_url)
 
     if not url:
-        logger.debug("REDIS_URL not set – using in-memory cache backend")
+        logger.debug(
+            "Redis cache not configured (set REDIS_URL or REDIS_HOST+REDIS_PORT) – "
+            "using in-memory cache backend"
+        )
         return MemoryCache()
 
     try:
@@ -64,6 +71,33 @@ def create_cache(redis_url: str | None = None) -> CacheBackend:
             exc,
         )
         return MemoryCache()
+
+
+def _resolve_redis_url(redis_url: str | None) -> str:
+    """Resolve Redis URL from explicit value or environment configuration."""
+    if redis_url is not None:
+        return redis_url
+
+    url = os.environ.get(_REDIS_URL_ENV, "").strip()
+    if url:
+        return url
+
+    host = os.environ.get(_REDIS_HOST_ENV, "").strip()
+    port = os.environ.get(_REDIS_PORT_ENV, "").strip()
+
+    if host and port:
+        if not port.isdigit():
+            logger.warning(
+                "Ignoring Redis config: REDIS_PORT must be numeric when using REDIS_HOST/REDIS_PORT"
+            )
+            return ""
+        return f"redis://{host}:{port}/0"
+
+    if host or port:
+        logger.warning(
+            "Incomplete Redis config: set REDIS_URL, or set both REDIS_HOST and REDIS_PORT"
+        )
+    return ""
 
 
 def _redact_url(url: str) -> str:

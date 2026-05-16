@@ -698,7 +698,7 @@ async def initialize_server() -> None:
         rate_limiter = get_rate_limiter()
         logger.info("Rate limiter initialized")
 
-        # Initialize cache backend (Redis if REDIS_URL is set, otherwise in-memory)
+        # Initialize cache backend (Redis if configured via REDIS_URL or REDIS_HOST/REDIS_PORT)
         logger.info("Initializing cache backend...")
         cache = create_cache()
         portfolio_integration._set_portfolio_cache(cache)
