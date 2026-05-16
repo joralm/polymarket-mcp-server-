@@ -25,6 +25,7 @@ def temp_env_file():
         f.write("POLYGON_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000001\n")
         f.write("POLYGON_ADDRESS=0x0000000000000000000000000000000000000001\n")
         f.write("POLYMARKET_CHAIN_ID=137\n")
+        f.write("POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock\n")
         yield f.name
 
     # Cleanup
@@ -58,6 +59,7 @@ class TestServerInitialization:
 
         os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
         os.environ["POLYGON_ADDRESS"] = "0x" + "0" * 40
+        os.environ["POLYMARKET_GEOBLOCK_URL"] = "https://polymarket.com/api/geoblock"
 
         try:
             from polymarket_mcp.config import load_config
@@ -66,7 +68,7 @@ class TestServerInitialization:
             assert config.POLYGON_ADDRESS is not None
         finally:
             # Cleanup
-            for key in ["POLYGON_PRIVATE_KEY", "POLYGON_ADDRESS"]:
+            for key in ["POLYGON_PRIVATE_KEY", "POLYGON_ADDRESS", "POLYMARKET_GEOBLOCK_URL"]:
                 if key in os.environ:
                     del os.environ[key]
 

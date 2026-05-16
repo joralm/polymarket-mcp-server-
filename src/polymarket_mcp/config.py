@@ -109,6 +109,10 @@ class PolymarketConfig(BaseSettings):
     GAMMA_API_TEST_URL: Optional[str] = Field(
         default=None, description="Gamma API endpoint for market data on testnet"
     )
+    POLYMARKET_GEOBLOCK_URL: Optional[str] = Field(
+        default=None,
+        description="Required Polymarket geoblock endpoint on polymarket.com",
+    )
 
     # WebSocket Controls
     WS_ENABLED: bool = Field(
@@ -251,6 +255,7 @@ class PolymarketConfig(BaseSettings):
         "GAMMA_API_URL",
         "CLOB_API_TEST_URL",
         "GAMMA_API_TEST_URL",
+        "POLYMARKET_GEOBLOCK_URL",
         mode="before",
     )
     @classmethod
@@ -421,6 +426,9 @@ def load_config() -> PolymarketConfig:
         PolymarketConfig: Validated configuration object
 
     Raises:
-        ValidationError: If required variables are missing or invalid
+        ValueError: If required variables are missing or invalid
     """
-    return PolymarketConfig()
+    config = PolymarketConfig()
+    if not config.POLYMARKET_GEOBLOCK_URL:
+        raise ValueError("POLYMARKET_GEOBLOCK_URL is required")
+    return config

@@ -39,6 +39,7 @@ def test_env_vars():
         "POLYMARKET_CHAIN_ID",
         "CLOB_API_URL",
         "GAMMA_API_URL",
+        "POLYMARKET_GEOBLOCK_URL",
     ]:
         original_env[key] = os.environ.get(key)
 
@@ -54,6 +55,9 @@ def test_env_vars():
 
     if not os.environ.get("GAMMA_API_URL"):
         os.environ["GAMMA_API_URL"] = "https://gamma-api.polymarket.com"
+
+    if not os.environ.get("POLYMARKET_GEOBLOCK_URL"):
+        os.environ["POLYMARKET_GEOBLOCK_URL"] = "https://polymarket.com/api/geoblock"
 
     yield
 
