@@ -109,7 +109,7 @@ volumes:
 #   1. Uncomment the redis service below (and the redis-data volume).
 #   2. Add "depends_on: [redis]" to the polymarket-mcp service.
 #   3. Set either REDIS_URL=redis://redis:6379/0 or REDIS_HOST=redis + REDIS_PORT=6379.
-#   4. Install the redis extra: pip install 'polymarket-mcp[redis]'
+#   4. The official Docker image already includes the Redis Python client.
 #
 # When REDIS_URL is not set the server uses its built-in in-memory cache
 # automatically — no further configuration needed.
