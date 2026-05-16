@@ -428,7 +428,4 @@ def load_config() -> PolymarketConfig:
     Raises:
         ValueError: If required variables are missing or invalid
     """
-    config = PolymarketConfig()
-    if not config.POLYMARKET_GEOBLOCK_URL:
-        raise ValueError("POLYMARKET_GEOBLOCK_URL is required")
-    return config
+    return PolymarketConfig()
