@@ -122,18 +122,18 @@ class PolymarketConfig(BaseSettings):
     # Logging
     LOG_LEVEL: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
 
-    # Polymarket Constants
-    USDC_ADDRESS: str = Field(
-        default="0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
-        description="USDC token address on Polygon",
+    # Polymarket Constants — no defaults; must be supplied via environment variables
+    USDC_ADDRESS: Optional[str] = Field(
+        default=None,
+        description="USDC token address on Polygon (set via USDC_ADDRESS env var)",
     )
-    CTF_EXCHANGE_ADDRESS: str = Field(
-        default="0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
-        description="CTF Exchange contract address",
+    CTF_EXCHANGE_ADDRESS: Optional[str] = Field(
+        default=None,
+        description="CTF Exchange contract address (set via CTF_EXCHANGE_ADDRESS env var)",
     )
-    CONDITIONAL_TOKEN_ADDRESS: str = Field(
-        default="0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
-        description="Conditional Token contract address",
+    CONDITIONAL_TOKEN_ADDRESS: Optional[str] = Field(
+        default=None,
+        description="Conditional Token contract address (set via CONDITIONAL_TOKEN_ADDRESS env var)",
     )
 
     @field_validator("POLYGON_PRIVATE_KEY")
