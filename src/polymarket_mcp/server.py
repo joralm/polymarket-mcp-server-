@@ -618,7 +618,7 @@ async def initialize_server() -> None:
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        geoblock_url = getattr(config, "POLYMARKET_GEOBLOCK_URL", None)
+        geoblock_url = config.POLYMARKET_GEOBLOCK_URL
         if geoblock_url:
             geoblocked = await _check_geoblock_status(geoblock_url)
             if geoblocked is True:
