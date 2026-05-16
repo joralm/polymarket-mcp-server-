@@ -16,11 +16,24 @@ import httpx
 
 import mcp.types as types
 
+from ..cache import CacheBackend, MemoryCache
+
 logger = logging.getLogger(__name__)
+
+# Cache namespace for portfolio data
+_CACHE_NS = "portfolio:"
+# Default TTL for positions / portfolio data (seconds)
+_POSITIONS_TTL = 30
 
 
 class PortfolioDataCache:
-    """Simple cache for portfolio data to reduce API calls"""
+    """
+    Simple cache for portfolio data to reduce API calls.
+
+    .. deprecated::
+        This class is kept for backward compatibility.  New code should use
+        the ``CacheBackend`` abstraction from ``polymarket_mcp.cache``.
+    """
     def __init__(self, ttl_seconds: int = 30):
         self.ttl_seconds = ttl_seconds
         self._cache: Dict[str, Tuple[Any, float]] = {}
@@ -44,8 +57,21 @@ class PortfolioDataCache:
         self._cache.clear()
 
 
-# Global cache instance
-_portfolio_cache = PortfolioDataCache()
+# Module-level default cache (MemoryCache).  Replaced at server startup when
+# Redis is configured via _set_portfolio_cache().
+_portfolio_cache: CacheBackend = MemoryCache(default_ttl_seconds=_POSITIONS_TTL)
+
+
+def _set_portfolio_cache(cache: CacheBackend) -> None:
+    """
+    Replace the module-level portfolio cache backend.
+
+    Called by the server during startup to inject the configured backend
+    (Redis or in-memory).
+    """
+    global _portfolio_cache
+    _portfolio_cache = cache
+    logger.info("Portfolio cache backend set to %s", type(cache).__name__)
 
 
 def _coerce_balance_number(value: Any) -> Optional[float]:
@@ -148,9 +174,9 @@ async def get_all_positions(
         await rate_limiter.acquire(EndpointCategory.DATA_API)
 
         # Check cache first
-        cache_key = f"positions_{include_closed}_{min_value}"
-        cached_data = _portfolio_cache.get(cache_key)
-        if cached_data:
+        cache_key = f"{_CACHE_NS}positions:{portfolio_user}:{include_closed}:{min_value}"
+        cached_data = await _portfolio_cache.get(cache_key)
+        if cached_data is not None:
             logger.debug("Using cached positions data")
             positions_data = cached_data
         else:
@@ -169,7 +195,7 @@ async def get_all_positions(
                 positions_data = response.json()
 
                 # Cache the result
-                _portfolio_cache.set(cache_key, positions_data)
+                await _portfolio_cache.set(cache_key, positions_data, ttl_seconds=_POSITIONS_TTL)
 
         if not positions_data:
             return [types.TextContent(

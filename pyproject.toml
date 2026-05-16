@@ -23,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+redis = [
+    "redis>=5.0.0",
+]
 dev = [
     # Testing framework
     "pytest>=9.0.0",

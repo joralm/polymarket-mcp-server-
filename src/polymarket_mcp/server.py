@@ -37,6 +37,7 @@ from .tools import (
     portfolio_integration,
     realtime,
 )
+from .cache import create_cache
 
 # Configure logging
 logging.basicConfig(
@@ -696,6 +697,12 @@ async def initialize_server() -> None:
         # Initialize rate limiter (singleton)
         rate_limiter = get_rate_limiter()
         logger.info("Rate limiter initialized")
+
+        # Initialize cache backend (Redis if REDIS_URL is set, otherwise in-memory)
+        logger.info("Initializing cache backend...")
+        cache = create_cache()
+        portfolio_integration._set_portfolio_cache(cache)
+        logger.info("Cache backend initialised: %s", type(cache).__name__)
 
         # Initialize trading tools (only if authenticated)
         if _has_authenticated_trading_access():

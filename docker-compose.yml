@@ -54,6 +54,9 @@ services:
       - CTF_EXCHANGE_ADDRESS=${CTF_EXCHANGE_ADDRESS:-0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E}
       - CONDITIONAL_TOKEN_ADDRESS=${CONDITIONAL_TOKEN_ADDRESS:-0x4D97DCd97eC945f40cF65F87097ACe5EA0476045}
 
+      # Optional: Redis cache (leave empty to use built-in in-memory cache)
+      - REDIS_URL=${REDIS_URL:-}
+
     ports:
       - "${MCP_STREAMABLE_HTTP_PORT:-8000}:${MCP_STREAMABLE_HTTP_PORT:-8000}"
 
@@ -97,7 +100,18 @@ volumes:
   polymarket-data:
     driver: local
 
-# Optional: Add Redis for caching (uncomment if needed)
+# ============================================================================
+# Optional Redis service for shared / persistent caching
+# ============================================================================
+# To enable Redis caching:
+#   1. Uncomment the redis service below (and the redis-data volume).
+#   2. Add "depends_on: [redis]" to the polymarket-mcp service.
+#   3. Set REDIS_URL=redis://redis:6379/0 in your .env file.
+#   4. Install the redis extra: pip install 'polymarket-mcp[redis]'
+#
+# When REDIS_URL is not set the server uses its built-in in-memory cache
+# automatically — no further configuration needed.
+#
 # services:
 #   redis:
 #     image: redis:7-alpine
