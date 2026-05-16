@@ -556,6 +556,7 @@ class TestWalletConfigFlow:
         assert os.environ.get("POLYMARKET_CHAIN_ID") == "137"
         assert os.environ.get("CLOB_API_URL") == "https://clob.polymarket.com"
         assert os.environ.get("GAMMA_API_URL") == "https://gamma-api.polymarket.com"
+        assert os.environ.get("POLYMARKET_GEOBLOCK_URL") == "https://polymarket.com/api/geoblock"
 
     def test_config_demo_mode_does_not_inject_wallet_defaults(self):
         cfg = PolymarketConfig(DEMO_MODE=True)
@@ -656,6 +657,7 @@ class TestWalletConfigFlow:
                 "GAMMA_API_URL",
                 "CLOB_API_TEST_URL",
                 "GAMMA_API_TEST_URL",
+                "POLYMARKET_GEOBLOCK_URL",
                 "POLYGON_PRIVATE_KEY",
                 "POLYGON_ADDRESS",
             )
@@ -668,6 +670,7 @@ class TestWalletConfigFlow:
         os.environ["POLYMARKET_TEST_CHAIN_ID"] = "80002"
         os.environ["CLOB_API_TEST_URL"] = "https://clob-testnet.polytest.cloud"
         os.environ["GAMMA_API_TEST_URL"] = "https://gcomm-api.polytest.cloud"
+        os.environ["POLYMARKET_GEOBLOCK_URL"] = "https://polymarket.com/api/geoblock"
         os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
         os.environ["POLYGON_ADDRESS"] = "0x" + "1" * 40
 
@@ -697,6 +700,7 @@ class TestWalletConfigFlow:
                 "GAMMA_API_URL",
                 "CLOB_API_TEST_URL",
                 "GAMMA_API_TEST_URL",
+                "POLYMARKET_GEOBLOCK_URL",
                 "POLYGON_PRIVATE_KEY",
                 "POLYGON_ADDRESS",
             )
@@ -713,6 +717,7 @@ class TestWalletConfigFlow:
         ):
             os.environ.pop(key, None)
 
+        os.environ["POLYMARKET_GEOBLOCK_URL"] = "https://polymarket.com/api/geoblock"
         os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
         os.environ["POLYGON_ADDRESS"] = "0x" + "1" * 40
 
@@ -730,6 +735,38 @@ class TestWalletConfigFlow:
         assert cfg.CLOB_API_URL is None
         assert cfg.GAMMA_API_URL is None
         assert cfg.polymarket_config_error == "POLYMARKET_ENV is not set"
+
+    def test_load_config_requires_geoblock_url(self):
+        original = {
+            key: os.environ.get(key)
+            for key in (
+                "POLYMARKET_ENV",
+                "POLYMARKET_CHAIN_ID",
+                "CLOB_API_URL",
+                "GAMMA_API_URL",
+                "POLYMARKET_GEOBLOCK_URL",
+                "POLYGON_PRIVATE_KEY",
+                "POLYGON_ADDRESS",
+            )
+        }
+
+        os.environ["POLYMARKET_ENV"] = "mainnet"
+        os.environ["POLYMARKET_CHAIN_ID"] = "137"
+        os.environ["CLOB_API_URL"] = "https://clob.polymarket.com"
+        os.environ["GAMMA_API_URL"] = "https://gamma-api.polymarket.com"
+        os.environ.pop("POLYMARKET_GEOBLOCK_URL", None)
+        os.environ["POLYGON_PRIVATE_KEY"] = "0" * 64
+        os.environ["POLYGON_ADDRESS"] = "0x" + "1" * 40
+
+        try:
+            with pytest.raises(ValueError, match="POLYMARKET_GEOBLOCK_URL is required"):
+                load_config()
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 class TestTradingMarketIdCompatibility:
@@ -2154,6 +2191,7 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
         mock_config.POLYMARKET_SIGNATURE_TYPE = 3
         mock_config.WS_ENABLED = False
@@ -2226,7 +2264,7 @@ class TestEnsureValidApiCredentials:
                     await server_module.initialize_server()
 
             mock_create.assert_not_called()
-            mock_geoblock.assert_awaited_once_with(mock_config.CLOB_API_URL)
+            mock_geoblock.assert_awaited_once_with(mock_config.POLYMARKET_GEOBLOCK_URL)
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)
@@ -2259,6 +2297,7 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
         mock_config.POLYMARKET_SIGNATURE_TYPE = 3
         mock_config.WS_ENABLED = False
@@ -2284,7 +2323,7 @@ class TestEnsureValidApiCredentials:
                 mock_geoblock.return_value = False
                 await server_module.initialize_server()
 
-            mock_geoblock.assert_awaited_once_with(mock_config.CLOB_API_URL)
+            mock_geoblock.assert_awaited_once_with(mock_config.POLYMARKET_GEOBLOCK_URL)
             mock_create.assert_called_once()
         finally:
             for key, val in saved.items():
@@ -2318,6 +2357,7 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
         mock_config.POLYMARKET_SIGNATURE_TYPE = 3
         mock_config.WS_ENABLED = False
@@ -2343,7 +2383,7 @@ class TestEnsureValidApiCredentials:
                 mock_geoblock.return_value = None
                 await server_module.initialize_server()
 
-            mock_geoblock.assert_awaited_once_with(mock_config.CLOB_API_URL)
+            mock_geoblock.assert_awaited_once_with(mock_config.POLYMARKET_GEOBLOCK_URL)
             mock_create.assert_called_once()
         finally:
             for key, val in saved.items():

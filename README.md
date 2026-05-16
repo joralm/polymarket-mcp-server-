@@ -239,12 +239,16 @@ nano .env
 POLYGON_PRIVATE_KEY=your_private_key_without_0x_prefix
 POLYGON_ADDRESS=0xYourPolygonAddress
 POLYMARKET_ENV=mainnet
+POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock
 ```
 
 **Environment switch (recommended):**
 - `POLYMARKET_ENV=mainnet` → Chain `137`, CLOB `https://clob.polymarket.com`, Gamma `https://gamma-api.polymarket.com`
 - `POLYMARKET_ENV=testnet` → Chain `80002`, CLOB `https://clob-testnet.polytest.cloud`, Gamma `https://gcomm-api.polytest.cloud`
 - You can still override `POLYMARKET_CHAIN_ID`, `CLOB_API_URL`, and `GAMMA_API_URL` explicitly.
+- `POLYMARKET_GEOBLOCK_URL` is always required and should be set to `https://polymarket.com/api/geoblock` because the geoblock check is served from `polymarket.com`, not the API hosts.
+
+> ⚠️ **Required startup check**: if `POLYMARKET_GEOBLOCK_URL` is missing, the application refuses to start. Docker Compose also fails fast until this variable is provided.
 
 > ⚠️ **Testnet status unknown**: The testnet endpoints (`clob-testnet.polytest.cloud`, `gcomm-api.polytest.cloud`) may currently be unavailable. Their current operational status is unknown. If they do not resolve or respond, use `POLYMARKET_ENV=mainnet` instead. The codebase remains prepared for testnet use when/if those endpoints become accessible again.
 

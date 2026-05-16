@@ -130,7 +130,7 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
     Extract geoblock boolean from documented/common response shapes.
 
     Args:
-        payload: JSON-decoded response body from CLOB /geoblock endpoint.
+        payload: JSON-decoded response body from the Polymarket geoblock endpoint.
 
     The documented field is expected to be `geoblocked`, but we also accept
     legacy/alternate boolean keys to stay resilient to payload drift.
@@ -163,17 +163,17 @@ def _extract_geoblock_status(payload: Any) -> Optional[bool]:
     return None
 
 
-async def _check_geoblock_status(clob_api_url: Optional[str]) -> Optional[bool]:
+async def _check_geoblock_status(geoblock_url: Optional[str]) -> Optional[bool]:
     """
     Query Polymarket geoblock endpoint at startup.
 
     Returns:
         True if geoblocked, False if explicitly not geoblocked, None if inconclusive.
     """
-    if not clob_api_url:
+    if not geoblock_url:
         return None
 
-    url = f"{clob_api_url.rstrip('/')}/geoblock"
+    url = geoblock_url
     try:
         timeout = httpx.Timeout(
             connect=GEOBLOCK_CONNECT_TIMEOUT_SECONDS,
@@ -617,11 +617,11 @@ async def initialize_server() -> None:
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)
 
-        geoblocked = await _check_geoblock_status(config.CLOB_API_URL)
+        geoblocked = await _check_geoblock_status(config.POLYMARKET_GEOBLOCK_URL)
         if geoblocked is True:
             raise RuntimeError(
                 "Startup aborted: this server location is geoblocked by Polymarket "
-                "(CLOB /geoblock endpoint)"
+                "(/api/geoblock endpoint)"
             )
 
         if not polymarket_ready:
