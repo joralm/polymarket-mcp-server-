@@ -2439,11 +2439,15 @@ class TestEnsureValidApiCredentials:
                 patch("polymarket_mcp.server.create_safety_limits_from_config"),
                 patch("polymarket_mcp.server.get_rate_limiter"),
                 patch("polymarket_mcp.server.TradingTools"),
+                patch("polymarket_mcp.server.logger") as mock_logger,
             ):
                 await server_module.initialize_server()
 
             mock_geoblock.assert_not_awaited()
             mock_create.assert_called_once()
+            mock_logger.info.assert_any_call(
+                "POLYMARKET_GEOBLOCK_URL not set; skipping startup geoblock check"
+            )
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)
