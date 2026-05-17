@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, OrderSummary
 from py_clob_client_v2.exceptions import PolyApiException
-from polymarket_mcp.auth.client import PolymarketClient
+from polymarket_mcp.auth.client import MIN_ALLOWANCE_THRESHOLD, PolymarketClient
 from polymarket_mcp.config import PolymarketConfig, load_config
 from polymarket_mcp.tools.portfolio import get_portfolio_value, _extract_cash_balance
 from polymarket_mcp.tools.trading import TradingTools
@@ -1547,7 +1547,7 @@ class TestClobClientSignatureType:
             )
 
         allowance_call = MagicMock()
-        allowance_call.call.return_value = 1_000_001 * (10**6)
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD + (10**6)
 
         functions = MagicMock()
         functions.allowance.return_value = allowance_call
@@ -1582,7 +1582,7 @@ class TestClobClientSignatureType:
             )
 
         allowance_call = MagicMock()
-        allowance_call.call.return_value = 1_000_000 * (10**6)
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD
 
         functions = MagicMock()
         functions.allowance.return_value = allowance_call

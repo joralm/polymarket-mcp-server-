@@ -8,7 +8,6 @@ import logging
 import os
 import re
 from itertools import chain
-from types import SimpleNamespace
 import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import (
@@ -145,13 +144,6 @@ class PolymarketClient:
             requested_funder = self.address
         self.funder_address = requested_funder
         self.host = host
-        self.config = SimpleNamespace(
-            polygon_address=self.address,
-            polygon_private_key=self.private_key,
-            signature_type=self.signature_type,
-            usdc_address=os.getenv("USDC_ADDRESS"),
-            ctf_exchange_address=os.getenv("CTF_EXCHANGE_ADDRESS"),
-        )
 
         # Initialize order signer
         self.signer = OrderSigner(private_key, chain_id)
@@ -190,7 +182,7 @@ class PolymarketClient:
         self.client: Optional[ClobClient] = None
         self.clob_client: Optional[ClobClient] = None
         self._initialize_client()
-        if self.signature_type in {2, "2"} and self.client is not None:
+        if self.signature_type == 2 and self.client is not None:
             try:
                 logger.info(
                     "Smart Proxy mode (type 2) active. Verifying allowances on-chain..."
@@ -270,13 +262,13 @@ class PolymarketClient:
             if w3 is None:
                 raise RuntimeError("Web3 provider not available on ClobClient")
 
-            account_address = to_checksum_address(self.config.polygon_address)
+            account_address = to_checksum_address(self.address)
 
             usdc_address = to_checksum_address(
-                self.config.usdc_address or DEFAULT_USDC_ADDRESS
+                os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS
             )
             spender_address = to_checksum_address(
-                self.config.ctf_exchange_address or DEFAULT_CTF_EXCHANGE_ADDRESS
+                os.getenv("CTF_EXCHANGE_ADDRESS") or DEFAULT_CTF_EXCHANGE_ADDRESS
             )
 
             erc20_abi = [
@@ -312,7 +304,11 @@ class PolymarketClient:
             ).call()
 
             if current_allowance >= MIN_ALLOWANCE_THRESHOLD:
-                logger.info("Allowance is already sufficient (%s). Skipping.", current_allowance)
+                logger.info(
+                    "Allowance is already sufficient (%s >= %s). Skipping.",
+                    current_allowance,
+                    MIN_ALLOWANCE_THRESHOLD,
+                )
                 return True
 
             logger.warning(
@@ -333,13 +329,15 @@ class PolymarketClient:
             tx.setdefault("gas", approve_call.estimate_gas({"from": account_address}))
 
             signed_tx = w3.eth.account.sign_transaction(
-                tx, private_key=self.config.polygon_private_key
+                tx, private_key=self.private_key
             )
             # eth-account/web3 changed the signed raw transaction attribute name
             # from `rawTransaction` to `raw_transaction`; support both.
             raw_transaction = getattr(signed_tx, "raw_transaction", None)
             if raw_transaction is None:
-                raw_transaction = signed_tx.rawTransaction
+                raw_transaction = getattr(signed_tx, "rawTransaction", None)
+            if raw_transaction is None:
+                raise RuntimeError("Signed transaction does not expose raw transaction bytes")
 
             tx_hash = w3.eth.send_raw_transaction(raw_transaction)
             logger.info("Approve transaction submitted to Polygon. Hash: %s", tx_hash.hex())
