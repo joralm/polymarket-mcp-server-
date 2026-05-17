@@ -1708,8 +1708,8 @@ class TestMarketAnalysisIdentifierCompatibility:
         assert data["auth"]["passphrase"] == "test-passphrase"
 
     @pytest.mark.asyncio
-    async def test_websocket_auth_does_not_reuse_passphrase_as_secret(self):
-        """WebSocket auth should keep secret and passphrase separate even when secret is missing."""
+    async def test_config_and_websocket_keep_secret_passphrase_separate_when_secret_missing(self):
+        """Config should reject incomplete triplet and websocket payload must not copy passphrase into secret."""
         config = PolymarketConfig(
             POLYGON_PRIVATE_KEY="0" * 64,
             POLYGON_ADDRESS="0x" + "0" * 40,

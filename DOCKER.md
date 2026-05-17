@@ -259,9 +259,9 @@ Then RESTART the container so the new credentials are picked up:
     ```
     Or, if you use a `.env` file:
     ```bash
-   POLYMARKET_RELAYER_KEY=<value from log>
-   POLYMARKET_RELAYER_SECRET=<value from log>
-   POLYMARKET_RELAYER_PASSPHRASE=<value from log>
+    POLYMARKET_RELAYER_KEY=<value from log>
+    POLYMARKET_RELAYER_SECRET=<value from log>
+    POLYMARKET_RELAYER_PASSPHRASE=<value from log>
     ```
 4. Restart the container:
    ```bash
