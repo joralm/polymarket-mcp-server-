@@ -971,7 +971,6 @@ class PolymarketClient:
         """
         if (
             self._allow_credential_derivation
-            and self._api_creds_from_config
             and not self._zero_balance_proxy_refresh_attempted
             and self._extract_numeric_balance(balance_data) == 0.0
             and callable(getattr(self.client, "create_or_derive_api_key", None))
