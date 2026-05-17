@@ -860,6 +860,7 @@ class TestSDKCompatibility:
             client = PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "1" * 40,
+                signature_type=2,
                 api_key="test-api-key",
                 api_secret="test-api-secret",
                 passphrase="test-api-passphrase",
@@ -953,6 +954,38 @@ class TestSDKCompatibility:
         mock_refresh.assert_called_once()
         assert client.client.create_and_post_order.call_count == 2
         assert response["orderID"] == "ord-1"
+
+    @pytest.mark.asyncio
+    async def test_post_order_type3_does_not_refresh_legacy_api_keys(self):
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=3,
+                api_key="legacy-key",
+                api_secret="legacy-secret",
+                passphrase="legacy-pass",
+            )
+
+        mismatch_resp = MagicMock()
+        mismatch_resp.status_code = 400
+        mismatch_resp.json.return_value = {
+            "error": "the order signer address has to be the address of the API KEY"
+        }
+
+        client.client = MagicMock()
+        client.client.create_and_post_order.side_effect = PolyApiException(resp=mismatch_resp)
+
+        with patch.object(client, "_refresh_api_credentials") as mock_refresh:
+            with pytest.raises(RuntimeError, match="Type-3 signer flow"):
+                await client.post_order(
+                    token_id="123",
+                    price=0.5,
+                    size=1,
+                    side="BUY",
+                )
+
+        mock_refresh.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_balance_falls_back_to_get_balance_allowance(self):
@@ -2347,6 +2380,7 @@ class TestEnsureValidApiCredentials:
             client = PolymarketClient(
                 private_key=self._DUMMY_PRIVATE_KEY,
                 address=self._DUMMY_ADDRESS,
+                signature_type=2,
                 api_key="key-only",
                 api_secret=None,
                 passphrase="pass-only",
@@ -2362,11 +2396,26 @@ class TestEnsureValidApiCredentials:
             client = PolymarketClient(
                 private_key=self._DUMMY_PRIVATE_KEY,
                 address=self._DUMMY_ADDRESS,
+                signature_type=2,
                 api_key=api_key,
                 api_secret="secret-test" if with_creds else None,
                 passphrase="pass-test" if with_creds else None,
             )
         return client
+
+    def test_signature_type_3_ignores_configured_api_credentials(self):
+        with patch("polymarket_mcp.auth.client.ClobClient"):
+            client = PolymarketClient(
+                private_key=self._DUMMY_PRIVATE_KEY,
+                address=self._DUMMY_ADDRESS,
+                signature_type=3,
+                api_key="legacy-key",
+                api_secret="legacy-secret",
+                passphrase="legacy-pass",
+            )
+
+        assert client.api_creds is None
+        assert client._allow_credential_derivation is False
 
     @pytest.mark.asyncio
     async def test_derived_mode_bootstrap_calls_create_api_credentials(self):
@@ -2517,7 +2566,8 @@ class TestEnsureValidApiCredentials:
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
         mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
-        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
+        # Non-type-3 flow should still perform startup credential verification.
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 2
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"
         mock_config.DEMO_MODE = False
@@ -2538,6 +2588,62 @@ class TestEnsureValidApiCredentials:
 
             mock_client.ensure_valid_api_credentials.assert_awaited_once()
             assert mock_create.call_args.kwargs["host"] == mock_config.CLOB_API_URL
+        finally:
+            for key, val in saved.items():
+                setattr(server_module, key, val)
+
+    @pytest.mark.asyncio
+    async def test_initialize_server_skips_ensure_valid_for_signature_type_3(self):
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+            "safety_limits": server_module.safety_limits,
+            "rate_limiter": server_module.rate_limiter,
+            "trading_tools": server_module.trading_tools,
+            "websocket_manager": server_module.websocket_manager,
+        }
+
+        mock_client = MagicMock(spec=PolymarketClient)
+        mock_client.has_api_credentials.return_value = True
+        mock_client.has_verified_api_credentials.return_value = True
+        mock_client.ensure_valid_api_credentials = AsyncMock()
+
+        mock_config = MagicMock()
+        mock_config.POLYGON_PRIVATE_KEY = "0x" + "a" * 64
+        mock_config.POLYGON_ADDRESS = "0x" + "0" * 40
+        mock_config.POLYMARKET_CHAIN_ID = 137
+        mock_config.POLYMARKET_ENV = "mainnet"
+        mock_config.CLOB_API_URL = "https://clob.polymarket.com"
+        mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
+        mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_SIGNATURE_TYPE = 3
+        mock_config.WS_ENABLED = False
+        mock_config.LOG_LEVEL = "INFO"
+        mock_config.DEMO_MODE = False
+
+        try:
+            with (
+                patch("polymarket_mcp.server.load_config", return_value=mock_config),
+                patch(
+                    "polymarket_mcp.server.get_polymarket_runtime_state", return_value=(True, None)
+                ),
+                patch(
+                    "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
+                ) as mock_geoblock,
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                ),
+                patch("polymarket_mcp.server.create_safety_limits_from_config"),
+                patch("polymarket_mcp.server.get_rate_limiter"),
+                patch("polymarket_mcp.server.TradingTools"),
+            ):
+                mock_geoblock.return_value = False
+                await server_module.initialize_server()
+
+            mock_client.ensure_valid_api_credentials.assert_not_awaited()
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)
@@ -2927,6 +3033,7 @@ class TestSDKAlignment:
             client = PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
+                signature_type=2,
             )
         # No credentials set
         with pytest.raises(RuntimeError, match="L2 API credentials required"):
@@ -3077,6 +3184,7 @@ class TestSDKAlignment:
             client = PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
+                signature_type=2,
             )
         with pytest.raises(RuntimeError, match="L2 API credentials required"):
             await client.get_trades()

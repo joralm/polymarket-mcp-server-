@@ -146,10 +146,15 @@ async def load_mcp_config():
                 funder=config.effective_funder,
                 host=config.CLOB_API_URL,
             )
-            try:
-                await client.ensure_valid_api_credentials()
-            except Exception as e:
-                logger.warning("Could not verify API credentials for dashboard startup: %s", e)
+            if config.POLYMARKET_SIGNATURE_TYPE == 3:
+                logger.info(
+                    "signature_type=3 active: skipping dashboard startup API credential bootstrap/derivation."
+                )
+            else:
+                try:
+                    await client.ensure_valid_api_credentials()
+                except Exception as e:
+                    logger.warning("Could not verify API credentials for dashboard startup: %s", e)
 
         # Initialize safety limits
         safety_limits = create_safety_limits_from_config(config)
