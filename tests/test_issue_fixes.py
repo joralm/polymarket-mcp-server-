@@ -10,6 +10,7 @@ import pytest
 import json
 import os
 import httpx
+from pydantic import ValidationError
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
@@ -1747,6 +1748,40 @@ class TestMarketAnalysisIdentifierCompatibility:
         assert config.effective_api_secret == "relayer-secret"
         assert config.effective_api_passphrase == "relayer-passphrase"
         assert config.has_api_credentials() is True
+        assert config.l2_auth_mode == "static"
+
+    def test_config_requires_l2_key_when_runtime_is_enabled(self):
+        """L2 runtime must fail fast if relayer/API key UUID is missing."""
+        with pytest.raises(ValidationError, match="POLYMARKET_RELAYER_KEY is required"):
+            PolymarketConfig(
+                POLYGON_PRIVATE_KEY="0" * 64,
+                POLYGON_ADDRESS="0x" + "0" * 40,
+                POLYMARKET_CHAIN_ID=137,
+                CLOB_API_URL="https://clob.polymarket.com",
+                GAMMA_API_URL="https://gamma-api.polymarket.com",
+                POLYMARKET_ENV="mainnet",
+            )
+
+    def test_config_uses_derived_mode_when_key_exists_but_secret_passphrase_missing(self):
+        """When key exists but secret/passphrase are missing, mode should be derived."""
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_CHAIN_ID=137,
+            CLOB_API_URL="https://clob.polymarket.com",
+            GAMMA_API_URL="https://gamma-api.polymarket.com",
+            POLYMARKET_ENV="mainnet",
+            POLYMARKET_RELAYER_KEY="relayer-key",
+            POLYMARKET_RELAYER_SECRET=None,
+            POLYMARKET_RELAYER_PASSPHRASE=None,
+            POLYMARKET_API_SECRET="legacy-secret",
+            POLYMARKET_PASSPHRASE="legacy-passphrase",
+        )
+
+        assert config.effective_api_key == "relayer-key"
+        assert config.effective_api_secret is None
+        assert config.effective_api_passphrase is None
+        assert config.l2_auth_mode == "derived"
 
     def test_config_requires_all_three_l2_credential_fields(self):
         """L2 auth should require key, secret, and passphrase."""
@@ -2096,13 +2131,28 @@ class TestEnsureValidApiCredentials:
     _DUMMY_PRIVATE_KEY = "0x" + "a" * 64
     _DUMMY_ADDRESS = "0x" + "0" * 40
 
-    def _make_client(self, with_creds: bool = True):
-        """Return a PolymarketClient whose ClobClient is fully mocked."""
+    def test_client_does_not_reuse_passphrase_as_secret(self):
+        """Client bootstrap must not cross-fallback passphrase into secret."""
         with patch("polymarket_mcp.auth.client.ClobClient"):
             client = PolymarketClient(
                 private_key=self._DUMMY_PRIVATE_KEY,
                 address=self._DUMMY_ADDRESS,
-                api_key="key-test" if with_creds else None,
+                api_key="key-only",
+                api_secret=None,
+                passphrase="pass-only",
+            )
+
+        assert client.api_creds is None
+        assert client._allow_credential_derivation is True
+
+    def _make_client(self, with_creds: bool = True, key_only: bool = False):
+        """Return a PolymarketClient whose ClobClient is fully mocked."""
+        with patch("polymarket_mcp.auth.client.ClobClient"):
+            api_key = "key-test" if with_creds or key_only else None
+            client = PolymarketClient(
+                private_key=self._DUMMY_PRIVATE_KEY,
+                address=self._DUMMY_ADDRESS,
+                api_key=api_key,
                 api_secret="secret-test" if with_creds else None,
                 passphrase="pass-test" if with_creds else None,
             )
@@ -2111,7 +2161,7 @@ class TestEnsureValidApiCredentials:
     @pytest.mark.asyncio
     async def test_no_creds_calls_create_api_credentials(self):
         """When no credentials are configured, new ones must be created."""
-        client = self._make_client(with_creds=False)
+        client = self._make_client(with_creds=False, key_only=True)
         assert not client.has_api_credentials()
 
         with patch.object(client, "create_api_credentials", new_callable=AsyncMock) as mock_create:
@@ -2138,29 +2188,44 @@ class TestEnsureValidApiCredentials:
 
     @pytest.mark.asyncio
     async def test_configured_creds_from_different_wallet_are_reconciled_before_probe(self):
-        """Startup must replace env creds if signer-derived API key differs."""
+        """Startup must not derive/replace creds when static relayer triplet is provided."""
         client = self._make_client(with_creds=True)
-        client.client.create_or_derive_api_key.return_value = ApiCreds(
-            api_key="derived-key",
-            api_secret="derived-secret",
-            api_passphrase="derived-pass",
-        )
-        client.client.set_api_creds = MagicMock()
+        client.client.create_or_derive_api_key = MagicMock()
 
         with patch.object(client, "_fetch_balance_once", return_value={"balance": "10.0"}):
             await client.ensure_valid_api_credentials()
 
-        client.client.set_api_creds.assert_called_once()
-        assert client.api_creds.api_key == "derived-key"
-        assert client._api_creds_from_config is False
+        client.client.create_or_derive_api_key.assert_not_called()
+        assert client._api_creds_from_config is True
         assert client.has_verified_api_credentials()
 
     @pytest.mark.asyncio
     async def test_stale_creds_401_triggers_refresh(self):
-        """On HTTP 401, existing credentials must be refreshed at startup."""
+        """On HTTP 401 with static credentials, startup must not auto-derive new keys."""
         from py_clob_client_v2.exceptions import PolyApiException
 
         client = self._make_client(with_creds=True)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.json.return_value = {"error": "Unauthorized"}
+        exc_401 = PolyApiException(resp=mock_resp)
+
+        with (
+            patch.object(client, "_fetch_balance_once", side_effect=[exc_401, {"balance": "10.0"}]),
+            patch.object(client, "_refresh_api_credentials") as mock_refresh,
+        ):
+            await client.ensure_valid_api_credentials()
+
+        mock_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stale_creds_401_triggers_refresh_for_derived_mode(self):
+        """On HTTP 401, derived-mode credentials should auto-refresh."""
+        from py_clob_client_v2.exceptions import PolyApiException
+
+        client = self._make_client(with_creds=True)
+        client._allow_credential_derivation = True
 
         mock_resp = MagicMock()
         mock_resp.status_code = 401

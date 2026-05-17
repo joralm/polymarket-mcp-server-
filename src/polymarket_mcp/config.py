@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+
 class PolymarketConfig(BaseSettings):
     """
     Configuration settings for Polymarket MCP server.
@@ -44,7 +45,7 @@ class PolymarketConfig(BaseSettings):
         description="Polymarket environment selection: mainnet (or prod alias) or testnet",
     )
 
-    # Optional L2 API Credentials (auto-created if not provided)
+    # L2 API Credentials
     POLYMARKET_API_KEY: Optional[str] = Field(
         default=None, description="L2 API key for authenticated requests"
     )
@@ -346,8 +347,7 @@ class PolymarketConfig(BaseSettings):
                 self.CLOB_API_URL = None
                 self.GAMMA_API_URL = None
                 self._polymarket_config_error = (
-                    "POLYMARKET_ENV=testnet but missing required variables: "
-                    + ", ".join(missing)
+                    "POLYMARKET_ENV=testnet but missing required variables: " + ", ".join(missing)
                 )
                 return self
 
@@ -376,6 +376,18 @@ class PolymarketConfig(BaseSettings):
             return self
 
         self._polymarket_ready = True
+        return self
+
+    @model_validator(mode="after")
+    def validate_l2_bootstrap_requirements(self):
+        """Validate strict L2 bootstrap requirements for non-demo runtime."""
+        if self.DEMO_MODE or not self._polymarket_ready:
+            return self
+        if not self.effective_api_key:
+            raise ValueError(
+                "POLYMARKET_RELAYER_KEY is required for L2 auth bootstrap "
+                "(legacy POLYMARKET_API_KEY is still accepted)."
+            )
         return self
 
     def has_api_credentials(self) -> bool:
@@ -416,17 +428,34 @@ class PolymarketConfig(BaseSettings):
     @property
     def effective_api_key(self) -> Optional[str]:
         """Resolved CLOB/relayer API key used for authenticated L2 calls."""
-        return self.POLYMARKET_RELAYER_KEY or self.POLYMARKET_API_KEY
+        return (
+            self.POLYMARKET_RELAYER_KEY
+            if self.POLYMARKET_RELAYER_KEY is not None
+            else self.POLYMARKET_API_KEY
+        )
 
     @property
     def effective_api_secret(self) -> Optional[str]:
         """Resolved CLOB/relayer API secret used for HMAC signing."""
-        return self.POLYMARKET_RELAYER_SECRET or self.POLYMARKET_API_SECRET
+        if self.POLYMARKET_RELAYER_KEY is not None:
+            return self.POLYMARKET_RELAYER_SECRET
+        return self.POLYMARKET_API_SECRET
 
     @property
     def effective_api_passphrase(self) -> Optional[str]:
         """Resolved CLOB/relayer API passphrase."""
-        return self.POLYMARKET_RELAYER_PASSPHRASE or self.POLYMARKET_PASSPHRASE
+        if self.POLYMARKET_RELAYER_KEY is not None:
+            return self.POLYMARKET_RELAYER_PASSPHRASE
+        return self.POLYMARKET_PASSPHRASE
+
+    @property
+    def l2_auth_mode(self) -> str:
+        """Resolved L2 auth bootstrap mode."""
+        if not self.effective_api_key:
+            return "missing"
+        if self.has_api_credentials():
+            return "static"
+        return "derived"
 
     @property
     def polymarket_ready(self) -> bool:

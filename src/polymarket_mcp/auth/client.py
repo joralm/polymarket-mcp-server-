@@ -109,7 +109,7 @@ class PolymarketClient:
             address: Polygon wallet address
             chain_id: Chain ID (137 for mainnet, 80002 for Amoy testnet)
             api_key: Optional L2 API key
-            api_secret: Optional L2 API secret (same as passphrase)
+            api_secret: Optional L2 API secret
             passphrase: Optional L2 API passphrase
             signature_type: Polymarket wallet signature type
             funder: Funding / deposit wallet address used for settlement
@@ -134,18 +134,17 @@ class PolymarketClient:
         # L2 API credentials
         self.api_creds: Optional[ApiCreds] = None
         self._api_creds_from_config = False
+        self._allow_credential_derivation = False
+        self._expected_api_key = api_key
         self._api_credentials_verified = False
         self._zero_balance_proxy_refresh_attempted = False
-        if api_key and (api_secret or passphrase):
-            secret = api_secret or passphrase
-            # Prefer the explicit passphrase when both values are provided, but
-            # fall back to the secret for backward compatibility with older
-            # environments that only persisted a single credential value.
-            auth_passphrase = passphrase if passphrase is not None else secret
+        if api_key and api_secret and passphrase:
             self.api_creds = ApiCreds(
-                api_key=api_key, api_secret=secret, api_passphrase=auth_passphrase
+                api_key=api_key, api_secret=api_secret, api_passphrase=passphrase
             )
             self._api_creds_from_config = True
+        elif api_key:
+            self._allow_credential_derivation = True
 
         # Initialize CLOB client
         self.client: Optional[ClobClient] = None
@@ -157,8 +156,10 @@ class PolymarketClient:
             f"signature_type: {self.signature_type}, L2 auth: {self.api_creds is not None})"
         )
         logger.debug(
-            "Auth bootstrap state: creds_from_config=%s, verified=%s, zero_balance_refresh_attempted=%s",
+            "Auth bootstrap state: creds_from_config=%s, allow_derivation=%s, verified=%s, "
+            "zero_balance_refresh_attempted=%s",
             self._api_creds_from_config,
+            self._allow_credential_derivation,
             self._api_credentials_verified,
             self._zero_balance_proxy_refresh_attempted,
         )
@@ -235,6 +236,12 @@ class PolymarketClient:
 
             # Use the client's built-in method to create/derive credentials
             creds = self.client.create_or_derive_api_key()
+
+            if self._expected_api_key and creds.api_key != self._expected_api_key:
+                raise RuntimeError(
+                    "Derived API key does not match configured POLYMARKET_RELAYER_KEY. "
+                    "Confirm the relayer UUID belongs to this wallet."
+                )
 
             # Store credentials
             self.api_creds = ApiCreds(
@@ -692,9 +699,7 @@ class PolymarketClient:
         try:
             payload = OrderMarketCancelParams(market=market, asset_id=asset_id)
             response = self.client.cancel_market_orders(payload)
-            logger.info(
-                "Market orders cancelled: market=%s asset_id=%s", market, asset_id
-            )
+            logger.info("Market orders cancelled: market=%s asset_id=%s", market, asset_id)
             return response
         except Exception as e:
             logger.error(
@@ -957,16 +962,15 @@ class PolymarketClient:
         error_text = str(exc).lower()
         return "order signer address has to be the address of the api key" in error_text
 
-    def _handle_zero_balance_refresh(
-        self, balance_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _handle_zero_balance_refresh(self, balance_data: Dict[str, Any]) -> Dict[str, Any]:
         """Handle proxy-wallet migration: refresh configured creds once if balance probes as 0.
 
         `balance_data` can be any normalized CLOB balance payload shape accepted
         by `_extract_numeric_balance()` (top-level or nested available/balance fields).
         """
         if (
-            self._api_creds_from_config
+            self._allow_credential_derivation
+            and self._api_creds_from_config
             and not self._zero_balance_proxy_refresh_attempted
             and self._extract_numeric_balance(balance_data) == 0.0
             and callable(getattr(self.client, "create_or_derive_api_key", None))
@@ -994,7 +998,11 @@ class PolymarketClient:
 
     def _reconcile_configured_api_key_with_signer(self) -> None:
         """Replace configured credentials when they don't match signer-derived API key."""
-        if not self.api_creds or not self._api_creds_from_config:
+        if (
+            not self._allow_credential_derivation
+            or not self.api_creds
+            or not self._api_creds_from_config
+        ):
             return
 
         derive_fn = getattr(self.client, "create_or_derive_api_key", None)
@@ -1072,6 +1080,11 @@ class PolymarketClient:
                        (e.g. the wallet has insufficient allowance).
         """
         if not self.api_creds:
+            if not self._allow_credential_derivation:
+                raise RuntimeError(
+                    "L2 bootstrap requires POLYMARKET_RELAYER_SECRET and "
+                    "POLYMARKET_RELAYER_PASSPHRASE when derivation is disabled."
+                )
             logger.info("No API credentials found. Attempting to create...")
             await self.create_api_credentials()
             post_create_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
@@ -1083,13 +1096,14 @@ class PolymarketClient:
                 self._api_credentials_verified,
             )
             if not self._api_credentials_verified:
-                logger.warning("Post-create credential probe returned unexpected payload; keeping unverified.")
+                logger.warning(
+                    "Post-create credential probe returned unexpected payload; keeping unverified."
+                )
             logger.info("API credentials created successfully!")
             return
 
         logger.info("Testing existing API credentials...")
         try:
-            self._reconcile_configured_api_key_with_signer()
             logger.debug(
                 "Credential verification start: signer=%s funder=%s signature_type=%s has_l2=%s",
                 self.address,
@@ -1122,28 +1136,38 @@ class PolymarketClient:
         except PolyApiException as e:
             self._api_credentials_verified = False
             if e.status_code == 401:
-                logger.warning("API credentials rejected (HTTP 401) — refreshing credentials...")
-                self._refresh_api_credentials()
-                post_refresh_probe = self._handle_zero_balance_refresh(self._fetch_balance_once())
-                self._api_credentials_verified = self._probe_looks_valid(post_refresh_probe)
-                logger.debug(
-                    "Post-refresh credential probe result: looks_valid=%s extracted_balance=%s verified=%s",
-                    self._probe_looks_valid(post_refresh_probe),
-                    self._extract_numeric_balance(post_refresh_probe),
-                    self._api_credentials_verified,
-                )
-                if not self._api_credentials_verified:
+                if not self._allow_credential_derivation:
                     logger.warning(
-                        "Post-refresh credential probe returned unexpected payload; keeping unverified."
+                        "Static relayer credentials were rejected (HTTP 401). "
+                        "Automatic derivation is disabled for static mode."
                     )
-                    return
-                if self._extract_numeric_balance(post_refresh_probe) > 0.0:
-                    logger.info("API credentials refreshed and verified successfully.")
                 else:
                     logger.warning(
-                        "API credentials refreshed successfully, but spendable USDC is still 0 for funder %s.",
-                        self.funder_address,
+                        "API credentials rejected (HTTP 401) — refreshing credentials..."
                     )
+                    self._refresh_api_credentials()
+                    post_refresh_probe = self._handle_zero_balance_refresh(
+                        self._fetch_balance_once()
+                    )
+                    self._api_credentials_verified = self._probe_looks_valid(post_refresh_probe)
+                    logger.debug(
+                        "Post-refresh credential probe result: looks_valid=%s extracted_balance=%s verified=%s",
+                        self._probe_looks_valid(post_refresh_probe),
+                        self._extract_numeric_balance(post_refresh_probe),
+                        self._api_credentials_verified,
+                    )
+                    if not self._api_credentials_verified:
+                        logger.warning(
+                            "Post-refresh credential probe returned unexpected payload; keeping unverified."
+                        )
+                        return
+                    if self._extract_numeric_balance(post_refresh_probe) > 0.0:
+                        logger.info("API credentials refreshed and verified successfully.")
+                    else:
+                        logger.warning(
+                            "API credentials refreshed successfully, but spendable USDC is still 0 for funder %s.",
+                            self.funder_address,
+                        )
             else:
                 logger.warning(
                     "API credential probe returned an unexpected error (%s). "
