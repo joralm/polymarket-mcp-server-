@@ -5,8 +5,10 @@ Handles L1 (private key) and L2 (API key) authentication.
 
 from typing import Dict, Any, List, Optional
 import logging
+import os
 import re
 from itertools import chain
+from types import SimpleNamespace
 import httpx
 from py_clob_client_v2.client import ClobClient
 from py_clob_client_v2.clob_types import (
@@ -139,6 +141,13 @@ class PolymarketClient:
             requested_funder = self.address
         self.funder_address = requested_funder
         self.host = host
+        self.config = SimpleNamespace(
+            polygon_address=self.address,
+            polygon_private_key=self.private_key,
+            signature_type=self.signature_type,
+            USDC_ADDRESS=os.getenv("USDC_ADDRESS"),
+            CTF_EXCHANGE_ADDRESS=os.getenv("CTF_EXCHANGE_ADDRESS"),
+        )
 
         # Initialize order signer
         self.signer = OrderSigner(private_key, chain_id)
@@ -175,7 +184,16 @@ class PolymarketClient:
 
         # Initialize CLOB client
         self.client: Optional[ClobClient] = None
+        self.clob_client: Optional[ClobClient] = None
         self._initialize_client()
+        if self.signature_type in {2, "2"} and self.client is not None:
+            try:
+                logger.info(
+                    "Modo Smart Proxy (Tipo 2) ativo. A verificar e aprovar allowances na blockchain..."
+                )
+                self.auto_approve_allowances()
+            except Exception as e:
+                logger.error(f"Erro na execução automática do auto-approve: {e}")
 
         logger.info(
             f"PolymarketClient initialized for signer {self.address} "
@@ -221,12 +239,116 @@ class PolymarketClient:
 
             # Create client
             self.client = ClobClient(**client_args)
+            self.clob_client = self.client
 
             logger.info("ClobClient initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize ClobClient: {e}")
             raise
+
+    def auto_approve_allowances(self) -> bool:
+        """
+        Executado automaticamente no arranque para garantir que o contrato do
+        Exchange da Polymarket tem permissão para movimentar o USDC da carteira.
+        """
+        from eth_utils import to_checksum_address
+
+        try:
+            if not self.clob_client:
+                raise RuntimeError("ClobClient not initialized")
+
+            if hasattr(self.clob_client, "biconomy") and self.clob_client.biconomy:
+                w3 = self.clob_client.biconomy.web3
+            else:
+                nested_client = getattr(self.clob_client, "client", None)
+                w3 = getattr(nested_client, "w3", None)
+
+            if w3 is None:
+                raise RuntimeError("Web3 provider not available on ClobClient")
+
+            account_address = to_checksum_address(self.config.polygon_address)
+
+            usdc_address = to_checksum_address(
+                self.config.USDC_ADDRESS or "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            )
+            spender_address = to_checksum_address(
+                self.config.CTF_EXCHANGE_ADDRESS or "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+            )
+
+            erc20_abi = [
+                {
+                    "constant": True,
+                    "inputs": [
+                        {"name": "_owner", "type": "address"},
+                        {"name": "_spender", "type": "address"},
+                    ],
+                    "name": "allowance",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "payable": False,
+                    "stateMutability": "view",
+                    "type": "function",
+                },
+                {
+                    "constant": False,
+                    "inputs": [
+                        {"name": "_spender", "type": "address"},
+                        {"name": "_value", "type": "uint256"},
+                    ],
+                    "name": "approve",
+                    "outputs": [{"name": "", "type": "bool"}],
+                    "payable": False,
+                    "stateMutability": "nonpayable",
+                    "type": "function",
+                },
+            ]
+
+            usdc_contract = w3.eth.contract(address=usdc_address, abi=erc20_abi)
+            current_allowance = usdc_contract.functions.allowance(
+                account_address, spender_address
+            ).call()
+
+            if current_allowance > 1_000_000 * (10**6):
+                logger.info("Allowance já é suficiente (%s). Passar à frente.", current_allowance)
+                return True
+
+            logger.warning(
+                "Allowance insuficiente detectada (%s). A enviar transação de Approve...",
+                current_allowance,
+            )
+
+            max_allowance = (
+                115792089237316195423570985008687907853269984665640564039457584007913129639935
+            )
+            nonce = w3.eth.get_transaction_count(account_address)
+            approve_call = usdc_contract.functions.approve(spender_address, max_allowance)
+            tx = approve_call.build_transaction(
+                {
+                    "from": account_address,
+                    "nonce": nonce,
+                    "gasPrice": w3.eth.gas_price,
+                    "chainId": self.chain_id,
+                }
+            )
+            tx.setdefault("gas", approve_call.estimate_gas({"from": account_address}))
+
+            signed_tx = w3.eth.account.sign_transaction(
+                tx, private_key=self.config.polygon_private_key
+            )
+            raw_transaction = getattr(signed_tx, "raw_transaction", None)
+            if raw_transaction is None:
+                raw_transaction = signed_tx.rawTransaction
+
+            tx_hash = w3.eth.send_raw_transaction(raw_transaction)
+            logger.info("Transação de Approve submetida à Polygon. Hash: %s", tx_hash.hex())
+
+            w3.eth.wait_for_transaction_receipt(tx_hash)
+            logger.info("Contratos da Polymarket autorizados com sucesso no arranque!")
+            return True
+
+        except Exception as e:
+            logger.error(f"Falha no auto_approve_allowances de arranque: {str(e)}")
+            return False
 
     def get_client(self) -> ClobClient:
         """

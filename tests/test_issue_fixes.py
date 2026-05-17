@@ -1518,6 +1518,118 @@ class TestClobClientSignatureType:
         assert captured_args.get("signature_type") == 2
         assert captured_args.get("funder") == "0x" + "b" * 40
 
+    def test_initialize_client_auto_approves_allowance_for_signature_type_2(self):
+        """Smart proxy mode should trigger allowance verification after client init."""
+
+        def fake_initialize(self):
+            self.client = object()
+            self.clob_client = self.client
+
+        with (
+            patch.object(PolymarketClient, "_initialize_client", fake_initialize),
+            patch.object(PolymarketClient, "auto_approve_allowances", return_value=True) as approve,
+        ):
+            PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                signature_type=2,
+            )
+
+        approve.assert_called_once_with()
+
+    def test_auto_approve_allowances_skips_tx_when_allowance_is_already_high(self):
+        """auto_approve_allowances should not submit a tx when allowance is already sufficient."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = 1_000_001 * (10**6)
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.eth = eth
+
+        inner_client = MagicMock()
+        inner_client.w3 = w3
+
+        client.clob_client = MagicMock()
+        client.clob_client.biconomy = None
+        client.clob_client.client = inner_client
+
+        assert client.auto_approve_allowances() is True
+        functions.approve.assert_not_called()
+        eth.send_raw_transaction.assert_not_called()
+
+    def test_auto_approve_allowances_submits_tx_when_allowance_is_low(self):
+        """auto_approve_allowances should sign and send an approve tx when needed."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = 0
+
+        approve_call = MagicMock()
+        approve_call.build_transaction.return_value = {
+            "from": client.address,
+            "nonce": 7,
+            "gasPrice": 123,
+            "chainId": client.chain_id,
+        }
+        approve_call.estimate_gas.return_value = 45678
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+        functions.approve.return_value = approve_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        signed_tx = MagicMock()
+        signed_tx.raw_transaction = b"signed"
+
+        tx_hash = MagicMock()
+        tx_hash.hex.return_value = "0xabc"
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+        eth.get_transaction_count.return_value = 7
+        eth.gas_price = 123
+        eth.account.sign_transaction.return_value = signed_tx
+        eth.send_raw_transaction.return_value = tx_hash
+
+        w3 = MagicMock()
+        w3.eth = eth
+
+        inner_client = MagicMock()
+        inner_client.w3 = w3
+
+        client.clob_client = MagicMock()
+        client.clob_client.biconomy = None
+        client.clob_client.client = inner_client
+
+        assert client.auto_approve_allowances() is True
+        functions.approve.assert_called_once()
+        approve_call.build_transaction.assert_called_once()
+        eth.account.sign_transaction.assert_called_once()
+        eth.send_raw_transaction.assert_called_once_with(b"signed")
+        eth.wait_for_transaction_receipt.assert_called_once_with(tx_hash)
+
     def test_initialize_client_signature_type_0_forces_eoa_funder(self):
         """EOA direct mode must use signer EOA as funder."""
         captured_args = {}
