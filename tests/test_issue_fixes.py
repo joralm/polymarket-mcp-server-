@@ -571,7 +571,13 @@ class TestWalletConfigFlow:
         assert cfg.POLYGON_ADDRESS == ""
 
     def test_config_rejects_unsupported_signature_type(self):
-        with pytest.raises(ValueError, match="must be 0 .* 2 .* or 3"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"must be 0 \(EOA direct mode\), "
+                r"2 \(POLY_PROXY/proxy wallet\), or 3"
+            ),
+        ):
             PolymarketConfig(
                 POLYGON_PRIVATE_KEY="0" * 64,
                 POLYGON_ADDRESS="0x" + "1" * 40,
