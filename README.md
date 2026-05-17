@@ -273,6 +273,7 @@ POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock
 - `POLYMARKET_FUNDER` = Polymarket deposit/proxy wallet that actually holds balance and positions in the UI.
 - `POLYMARKET_SIGNATURE_TYPE`:
   - `0` = EOA direct mode (funder is signer EOA / `POLYGON_ADDRESS`)
+  - `2` = proxy wallet / `POLY_PROXY`
   - `3` = deposit wallet / `POLY_1271` (MetaMask flow)
 
 **Recommended Safety Limits:**
