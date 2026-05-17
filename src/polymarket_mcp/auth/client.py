@@ -146,6 +146,11 @@ class PolymarketClient:
         elif api_key:
             self._api_creds_from_config = False
             self._allow_credential_derivation = True
+        else:
+            # No credentials at all — derive all three from the private key at
+            # startup using create_or_derive_api_key() (official SDK flow).
+            self._api_creds_from_config = False
+            self._allow_credential_derivation = True
 
         # Initialize CLOB client
         self.client: Optional[ClobClient] = None
