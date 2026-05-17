@@ -157,9 +157,9 @@ Use this exact checklist:
   ```
 
 #### 4) `POLYMARKET_SIGNATURE_TYPE` (auth mode)
-- This server supports **only**:
-  - `3` for MetaMask + deposit-wallet (`POLY_1271`) setups.
-- Any other value is intentionally unsupported to avoid auth ambiguity.
+- This server supports:
+  - `0` for EOA direct mode (funder must be the signer EOA)
+  - `3` for MetaMask + deposit-wallet (`POLY_1271`) setups
 - Example:
   ```env
   POLYMARKET_SIGNATURE_TYPE=3

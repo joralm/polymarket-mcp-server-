@@ -118,15 +118,24 @@ class PolymarketClient:
         """
         self.private_key = private_key
         self.address = address.lower()
-        self.funder_address = (funder or address).lower()
+        requested_funder = (funder or address).lower()
         self.chain_id = chain_id
-        if signature_type != 3:
+        if signature_type not in {0, 3}:
             logger.warning(
-                "signature_type=%s requested, but this server enforces MetaMask deposit-wallet flow "
-                "(signature_type=3). Overriding to 3.",
+                "Unsupported signature_type=%s requested; defaulting to 3 (POLY_1271/deposit wallet).",
                 signature_type,
             )
-        self.signature_type = 3
+            signature_type = 3
+        self.signature_type = signature_type
+        if self.signature_type == 0 and requested_funder != self.address:
+            logger.warning(
+                "signature_type=0 (EOA direct) requires funder=signer address. "
+                "Overriding funder %s -> %s.",
+                requested_funder,
+                self.address,
+            )
+            requested_funder = self.address
+        self.funder_address = requested_funder
         self.host = host
 
         # Initialize order signer

@@ -115,7 +115,7 @@ def _log_docker_login_report() -> None:
         logger.info("  To enable FULL mode in Docker, ensure:")
         logger.info("    1) POLYGON_PRIVATE_KEY matches POLYGON_ADDRESS")
         logger.info("    2) POLYMARKET_FUNDER is the wallet that holds UI funds/positions")
-        logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
+        logger.info("    3) POLYMARKET_SIGNATURE_TYPE is 0 (EOA direct) or 3 (deposit wallet)")
         logger.info(
             "    4) POLYMARKET_RELAYER_KEY is set and secret/passphrase are valid "
             "(or not provided for derived mode)"

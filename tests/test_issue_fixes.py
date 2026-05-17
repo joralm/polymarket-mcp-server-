@@ -570,13 +570,21 @@ class TestWalletConfigFlow:
         assert cfg.POLYGON_PRIVATE_KEY == ""
         assert cfg.POLYGON_ADDRESS == ""
 
-    def test_config_rejects_non_deposit_signature_flow(self):
-        with pytest.raises(ValueError, match="must be 3"):
+    def test_config_rejects_unsupported_signature_type(self):
+        with pytest.raises(ValueError, match="must be 0 .* or 3"):
             PolymarketConfig(
                 POLYGON_PRIVATE_KEY="0" * 64,
                 POLYGON_ADDRESS="0x" + "1" * 40,
                 POLYMARKET_SIGNATURE_TYPE=1,
             )
+
+    def test_config_accepts_eoa_signature_flow(self):
+        cfg = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+            POLYMARKET_SIGNATURE_TYPE=0,
+        )
+        assert cfg.POLYMARKET_SIGNATURE_TYPE == 0
 
     @pytest.mark.asyncio
     async def test_web_dashboard_initializes_client_with_wallet_and_api_credentials(self):
@@ -1431,6 +1439,37 @@ class TestClobClientSignatureType:
 
         assert captured_args.get("signature_type") == 3
         assert captured_args.get("funder") == "0x" + "b" * 40
+
+    def test_initialize_client_signature_type_0_forces_eoa_funder(self):
+        """EOA direct mode must use signer EOA as funder."""
+        captured_args = {}
+
+        def fake_clob_init(self_inner, **kwargs):
+            captured_args.update(kwargs)
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = None
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                funder="0x" + "b" * 40,
+                signature_type=0,
+            )
+
+        assert captured_args.get("signature_type") == 0
+        assert captured_args.get("funder") == "0x" + "a" * 40
 
     @pytest.mark.asyncio
     async def test_get_balance_returns_nonzero_with_poly_proxy_type(self):
