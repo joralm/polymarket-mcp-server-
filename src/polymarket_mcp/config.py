@@ -380,13 +380,21 @@ class PolymarketConfig(BaseSettings):
 
     @model_validator(mode="after")
     def validate_l2_bootstrap_requirements(self):
-        """Validate strict L2 bootstrap requirements for non-demo runtime."""
+        """Validate L2 bootstrap requirements for non-demo runtime.
+
+        When ``POLYMARKET_RELAYER_KEY`` (or its legacy alias ``POLYMARKET_API_KEY``)
+        is set the server starts in *static* or *derived* mode.  When neither is set
+        but ``POLYGON_PRIVATE_KEY`` is present the server starts in *auto_derive*
+        mode and calls ``create_or_derive_api_key()`` at runtime to obtain L2
+        credentials (the official Polymarket Python SDK flow).
+        """
         if self.DEMO_MODE or not self._polymarket_ready:
             return self
-        if not self.effective_api_key:
+        if not self.effective_api_key and not self.POLYGON_PRIVATE_KEY:
             raise ValueError(
-                "POLYMARKET_RELAYER_KEY is required for L2 auth bootstrap "
-                "(legacy POLYMARKET_API_KEY is still accepted)."
+                "L2 auth bootstrap requires either POLYMARKET_RELAYER_KEY "
+                "(or legacy POLYMARKET_API_KEY) or POLYGON_PRIVATE_KEY. "
+                "Set DEMO_MODE=true for read-only access without credentials."
             )
         return self
 
@@ -450,8 +458,20 @@ class PolymarketConfig(BaseSettings):
 
     @property
     def l2_auth_mode(self) -> str:
-        """Resolved L2 auth bootstrap mode."""
+        """Resolved L2 auth bootstrap mode.
+
+        Returns one of:
+        - ``"static"``      – key + secret + passphrase all configured; no derivation needed.
+        - ``"derived"``     – key configured but secret/passphrase absent; secret/passphrase
+                              will be derived from the private key via the SDK.
+        - ``"auto_derive"`` – neither key nor secret/passphrase configured; all three L2
+                              credentials will be derived from POLYGON_PRIVATE_KEY at startup
+                              (official Polymarket Python SDK flow).
+        - ``"missing"``     – no private key and no API key; server cannot authenticate.
+        """
         if not self.effective_api_key:
+            if self.POLYGON_PRIVATE_KEY:
+                return "auto_derive"
             return "missing"
         if self.has_api_credentials():
             return "static"

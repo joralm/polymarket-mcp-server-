@@ -146,6 +146,12 @@ class PolymarketClient:
         elif api_key:
             self._api_creds_from_config = False
             self._allow_credential_derivation = True
+        else:
+            # No credentials at all — all three L2 fields will be derived from
+            # the private key via create_or_derive_api_key() when credentials
+            # are first needed (official Polymarket Python SDK flow).
+            self._api_creds_from_config = False
+            self._allow_credential_derivation = True
 
         # Initialize CLOB client
         self.client: Optional[ClobClient] = None
@@ -235,14 +241,12 @@ class PolymarketClient:
         try:
             logger.info("Creating API credentials...")
 
-            # Use the client's built-in method to create/derive credentials
+            # Use the client's built-in method to create/derive credentials.
+            # NOTE: POLYMARKET_RELAYER_KEY (from the Polymarket UI) is a *relayer*
+            # identity key and is distinct from the CLOB L2 trading key that the
+            # SDK derives deterministically from the wallet private key.  Never
+            # compare the two — they will always differ.
             creds = self.client.create_or_derive_api_key()
-
-            if self._expected_api_key and creds.api_key != self._expected_api_key:
-                raise RuntimeError(
-                    "Derived API key does not match configured POLYMARKET_RELAYER_KEY. "
-                    "Confirm the relayer UUID belongs to this wallet."
-                )
 
             # Store credentials
             self.api_creds = ApiCreds(
@@ -968,9 +972,13 @@ class PolymarketClient:
 
         `balance_data` can be any normalized CLOB balance payload shape accepted
         by `_extract_numeric_balance()` (top-level or nested available/balance fields).
+
+        Refresh is only attempted when credentials were loaded from static configuration
+        (``_api_creds_from_config=True``).  Auto-derived credentials are never refreshed
+        here — a zero balance simply means the wallet has no USDC.
         """
         if (
-            self._allow_credential_derivation
+            self._api_creds_from_config
             and not self._zero_balance_proxy_refresh_attempted
             and self._extract_numeric_balance(balance_data) == 0.0
             and callable(getattr(self.client, "create_or_derive_api_key", None))

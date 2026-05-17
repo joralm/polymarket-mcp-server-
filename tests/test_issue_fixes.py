@@ -1750,17 +1750,24 @@ class TestMarketAnalysisIdentifierCompatibility:
         assert config.has_api_credentials() is True
         assert config.l2_auth_mode == "static"
 
-    def test_config_requires_l2_key_when_runtime_is_enabled(self):
-        """L2 runtime must fail fast if relayer/API key UUID is missing."""
-        with pytest.raises(ValidationError, match="POLYMARKET_RELAYER_KEY is required"):
-            PolymarketConfig(
-                POLYGON_PRIVATE_KEY="0" * 64,
-                POLYGON_ADDRESS="0x" + "0" * 40,
-                POLYMARKET_CHAIN_ID=137,
-                CLOB_API_URL="https://clob.polymarket.com",
-                GAMMA_API_URL="https://gamma-api.polymarket.com",
-                POLYMARKET_ENV="mainnet",
-            )
+    def test_config_allows_startup_with_only_private_key(self):
+        """Startup must succeed with only POLYGON_PRIVATE_KEY set.
+
+        L2 trading credentials are auto-derived from the private key at runtime
+        via create_or_derive_api_key() (official Polymarket Python SDK flow).
+        POLYMARKET_RELAYER_KEY is NOT required for this path.
+        """
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_CHAIN_ID=137,
+            CLOB_API_URL="https://clob.polymarket.com",
+            GAMMA_API_URL="https://gamma-api.polymarket.com",
+            POLYMARKET_ENV="mainnet",
+        )
+        assert config.l2_auth_mode == "auto_derive"
+        assert config.effective_api_key is None
+        assert config.polymarket_ready is True
 
     def test_config_uses_derived_mode_when_key_exists_but_secret_passphrase_missing(self):
         """When key exists but secret/passphrase are missing, mode should be derived."""
