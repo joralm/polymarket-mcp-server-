@@ -1747,6 +1747,33 @@ class TestMarketAnalysisIdentifierCompatibility:
         assert config.effective_api_passphrase == "relayer-passphrase"
         assert config.has_api_credentials() is True
 
+    def test_config_requires_all_three_l2_credential_fields(self):
+        """L2 auth should require key, secret, and passphrase."""
+        base_kwargs = {
+            "POLYGON_PRIVATE_KEY": "0" * 64,
+            "POLYGON_ADDRESS": "0x" + "0" * 40,
+        }
+
+        missing_key = PolymarketConfig(
+            **base_kwargs,
+            POLYMARKET_RELAYER_SECRET="s",
+            POLYMARKET_RELAYER_PASSPHRASE="p",
+        )
+        missing_secret = PolymarketConfig(
+            **base_kwargs,
+            POLYMARKET_RELAYER_KEY="k",
+            POLYMARKET_RELAYER_PASSPHRASE="p",
+        )
+        missing_passphrase = PolymarketConfig(
+            **base_kwargs,
+            POLYMARKET_RELAYER_KEY="k",
+            POLYMARKET_RELAYER_SECRET="s",
+        )
+
+        assert missing_key.has_api_credentials() is False
+        assert missing_secret.has_api_credentials() is False
+        assert missing_passphrase.has_api_credentials() is False
+
     @pytest.mark.asyncio
     async def test_closing_soon_sends_closed_false(self):
         """get_closing_soon_markets must include closed=false."""
