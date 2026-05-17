@@ -421,12 +421,7 @@ class PolymarketConfig(BaseSettings):
     @property
     def effective_api_secret(self) -> Optional[str]:
         """Resolved CLOB/relayer API secret used for HMAC signing."""
-        return (
-            self.POLYMARKET_RELAYER_SECRET
-            or self.POLYMARKET_API_SECRET
-            or self.POLYMARKET_RELAYER_PASSPHRASE
-            or self.POLYMARKET_PASSPHRASE
-        )
+        return self.POLYMARKET_RELAYER_SECRET or self.POLYMARKET_API_SECRET
 
     @property
     def effective_api_passphrase(self) -> Optional[str]:

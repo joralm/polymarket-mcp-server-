@@ -87,7 +87,7 @@ def _log_docker_login_report() -> None:
     has_api_key = bool(config.effective_api_key)
     has_api_secret = bool(config.effective_api_secret)
     has_passphrase = bool(config.effective_api_passphrase)
-    has_l2_triplet = has_api_key and (has_api_secret or has_passphrase)
+    has_l2_triplet = has_api_key and has_api_secret and has_passphrase
     full_mode = _has_authenticated_trading_access()
 
     logger.info("DOCKER LOGIN REPORT")
