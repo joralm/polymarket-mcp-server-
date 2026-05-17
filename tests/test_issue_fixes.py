@@ -2566,6 +2566,7 @@ class TestEnsureValidApiCredentials:
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
         mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
+        # Non-type-3 flow should still perform startup credential verification.
         mock_config.POLYMARKET_SIGNATURE_TYPE = 2
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"
