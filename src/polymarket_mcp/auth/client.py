@@ -147,8 +147,9 @@ class PolymarketClient:
             self._api_creds_from_config = False
             self._allow_credential_derivation = True
         else:
-            # No credentials at all — derive all three from the private key at
-            # startup using create_or_derive_api_key() (official SDK flow).
+            # No credentials at all — all three L2 fields will be derived from
+            # the private key via create_or_derive_api_key() when credentials
+            # are first needed (official Polymarket Python SDK flow).
             self._api_creds_from_config = False
             self._allow_credential_derivation = True
 
