@@ -144,6 +144,7 @@ class PolymarketClient:
             )
             self._api_creds_from_config = True
         elif api_key:
+            self._api_creds_from_config = False
             self._allow_credential_derivation = True
 
         # Initialize CLOB client

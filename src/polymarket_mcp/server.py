@@ -117,7 +117,7 @@ def _log_docker_login_report() -> None:
         logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
         logger.info(
             "    4) POLYMARKET_RELAYER_KEY is set and secret/passphrase are valid "
-            "(or intentionally blank for derived mode)"
+            "(or not provided for derived mode)"
         )
         logger.info("    5) LOG_LEVEL=DEBUG to inspect auth diagnostics")
 

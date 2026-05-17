@@ -2159,7 +2159,7 @@ class TestEnsureValidApiCredentials:
         return client
 
     @pytest.mark.asyncio
-    async def test_key_only_bootstrap_calls_create_api_credentials(self):
+    async def test_derived_mode_bootstrap_calls_create_api_credentials(self):
         """When only relayer key is configured, secret/passphrase must be derived."""
         client = self._make_client(with_creds=False, key_only=True)
         assert not client.has_api_credentials()
