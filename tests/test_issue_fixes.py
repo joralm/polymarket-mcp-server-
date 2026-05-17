@@ -1522,7 +1522,7 @@ class TestClobClientSignatureType:
         """Smart proxy mode should trigger allowance verification after client init."""
 
         def fake_initialize(self):
-            self.client = object()
+            self.client = MagicMock()
             self.clob_client = self.client
 
         with (

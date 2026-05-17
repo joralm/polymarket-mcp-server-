@@ -31,6 +31,9 @@ from ..utils.usdc import scale_usdc_atomic_units
 logger = logging.getLogger(__name__)
 
 _CRED_BANNER = "=" * 70
+DEFAULT_USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+DEFAULT_CTF_EXCHANGE_ADDRESS = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+MIN_ALLOWANCE_THRESHOLD = 1_000_000 * (10**6)
 MAX_UINT256 = 2**256 - 1
 
 
@@ -146,8 +149,8 @@ class PolymarketClient:
             polygon_address=self.address,
             polygon_private_key=self.private_key,
             signature_type=self.signature_type,
-            USDC_ADDRESS=os.getenv("USDC_ADDRESS"),
-            CTF_EXCHANGE_ADDRESS=os.getenv("CTF_EXCHANGE_ADDRESS"),
+            usdc_address=os.getenv("USDC_ADDRESS"),
+            ctf_exchange_address=os.getenv("CTF_EXCHANGE_ADDRESS"),
         )
 
         # Initialize order signer
@@ -270,10 +273,10 @@ class PolymarketClient:
             account_address = to_checksum_address(self.config.polygon_address)
 
             usdc_address = to_checksum_address(
-                self.config.USDC_ADDRESS or "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+                self.config.usdc_address or DEFAULT_USDC_ADDRESS
             )
             spender_address = to_checksum_address(
-                self.config.CTF_EXCHANGE_ADDRESS or "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+                self.config.ctf_exchange_address or DEFAULT_CTF_EXCHANGE_ADDRESS
             )
 
             erc20_abi = [
@@ -308,7 +311,7 @@ class PolymarketClient:
                 account_address, spender_address
             ).call()
 
-            if current_allowance > 1_000_000 * (10**6):
+            if current_allowance > MIN_ALLOWANCE_THRESHOLD:
                 logger.info("Allowance is already sufficient (%s). Skipping.", current_allowance)
                 return True
 
@@ -332,6 +335,8 @@ class PolymarketClient:
             signed_tx = w3.eth.account.sign_transaction(
                 tx, private_key=self.config.polygon_private_key
             )
+            # eth-account/web3 changed the signed raw transaction attribute name
+            # from `rawTransaction` to `raw_transaction`; support both.
             raw_transaction = getattr(signed_tx, "raw_transaction", None)
             if raw_transaction is None:
                 raw_transaction = signed_tx.rawTransaction
