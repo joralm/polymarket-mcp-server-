@@ -957,14 +957,18 @@ class PolymarketClient:
         raise AttributeError("ClobClient does not expose a supported balance method")
 
     def has_api_credentials(self) -> bool:
-        """Check if L2 API credentials are available"""
+        """Check if authenticated trading prerequisites are satisfied for the active signature flow."""
         if self._is_type3_signature:
+            # Type-3 (POLY_1271/deposit wallet) uses signer-only relayer flow and
+            # intentionally does not keep/attach legacy API-key credentials.
             return True
         return self.api_creds is not None
 
     def has_verified_api_credentials(self) -> bool:
-        """Check if L2 credentials are present and were successfully verified."""
+        """Check if auth readiness is verified for the active signature flow."""
         if self._is_type3_signature:
+            # In type-3 mode there is no API-key verification step; treat the
+            # signer-only flow as auth-ready once client initialization succeeds.
             return True
         return self.api_creds is not None and self._api_credentials_verified
 
@@ -1126,6 +1130,8 @@ class PolymarketClient:
             logger.info(
                 "signature_type=3 active: skipping startup API credential validation/derivation."
             )
+            # This flag tracks startup auth readiness. For signature_type=3, no
+            # API-key validation exists, so signer-only readiness is considered verified.
             self._api_credentials_verified = True
             return
         if not self.api_creds:
