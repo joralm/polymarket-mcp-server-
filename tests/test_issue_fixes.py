@@ -1718,6 +1718,7 @@ class TestMarketAnalysisIdentifierCompatibility:
             POLYMARKET_PASSPHRASE="legacy-secret",
         )
         assert config.has_api_credentials() is False
+        assert config.effective_api_secret is None
         manager = WebSocketManager(config=config)
         manager.clob_ws = AsyncMock()
         manager.clob_ws.recv = AsyncMock(return_value='{"type":"authenticated"}')
