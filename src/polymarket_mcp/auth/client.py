@@ -120,9 +120,10 @@ class PolymarketClient:
         self.address = address.lower()
         requested_funder = (funder or address).lower()
         self.chain_id = chain_id
-        if signature_type not in {0, 3}:
+        if signature_type not in {0, 2, 3}:
             logger.warning(
-                "Unsupported signature_type=%s requested; defaulting to 3 (POLY_1271/deposit wallet).",
+                "Unsupported signature_type=%s requested; defaulting to 3 "
+                "(POLY_1271/deposit wallet).",
                 signature_type,
             )
             signature_type = 3
