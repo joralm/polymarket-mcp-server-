@@ -292,15 +292,6 @@ async def _subscribe_market_prices(arguments: Dict[str, Any]) -> List[types.Text
             callback_type=callback_type
         )
 
-        result = {
-            "success": True,
-            "subscription_id": subscription_id,
-            "type": "price_change",
-            "market_ids": market_ids,
-            "callback_type": callback_type,
-            "message": f"Subscribed to price changes for {len(market_ids)} market(s)"
-        }
-
         return [types.TextContent(
             type="text",
             text=f"Price change subscription created:\n\n"
