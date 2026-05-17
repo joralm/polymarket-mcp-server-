@@ -24,12 +24,11 @@ from py_clob_client_v2.clob_types import (
 from py_clob_client_v2.exceptions import PolyApiException
 
 from .signer import OrderSigner
+from ..utils.usdc import scale_usdc_atomic_units
 
 logger = logging.getLogger(__name__)
 
 _CRED_BANNER = "=" * 70
-_USDC_DECIMALS = 6
-_USDC_SCALE = 10**_USDC_DECIMALS
 
 
 def _log_new_credentials(api_key: str, api_secret: str, passphrase: str, reason: str) -> None:
@@ -788,17 +787,10 @@ class PolymarketClient:
     @staticmethod
     def _coerce_numeric(value: Any) -> Optional[float]:
         """Parse numeric-like values (including currency-formatted strings)."""
-        def _scale_if_atomic(parsed: float, raw_token: Optional[str] = None) -> float:
-            token = (raw_token or "").strip().lower()
-            is_integer_like = parsed.is_integer() and "." not in token and "e" not in token
-            if is_integer_like and abs(parsed) >= _USDC_SCALE:
-                return parsed / _USDC_SCALE
-            return parsed
-
         if value is None:
             return None
         if isinstance(value, (int, float)):
-            return _scale_if_atomic(float(value))
+            return scale_usdc_atomic_units(float(value), str(value))
         if isinstance(value, str):
             cleaned = value.strip().replace(",", "")
             # Extract the first signed decimal number from values like
@@ -809,7 +801,7 @@ class PolymarketClient:
                 return None
             try:
                 parsed = float(match.group(0))
-                return _scale_if_atomic(parsed, match.group(0))
+                return scale_usdc_atomic_units(parsed, match.group(0))
             except ValueError:
                 return None
         return None

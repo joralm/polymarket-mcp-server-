@@ -11,7 +11,6 @@ import json
 import os
 import logging
 import httpx
-from pydantic import ValidationError
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
@@ -20,8 +19,9 @@ from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, 
 from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig, load_config
-from polymarket_mcp.tools.portfolio import get_portfolio_value
+from polymarket_mcp.tools.portfolio import get_portfolio_value, _extract_cash_balance
 from polymarket_mcp.tools.trading import TradingTools
+from polymarket_mcp.utils.usdc import scale_usdc_atomic_units
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
 # ---------------------------------------------------------------------------
@@ -1488,7 +1488,7 @@ class TestPortfolioBalanceHandling:
         ):
             with patch(
                 "polymarket_mcp.tools.portfolio._get_usd_to_eur_rate",
-                new=AsyncMock(return_value=1.0),
+                new=AsyncMock(return_value=(1.0, True)),
             ):
                 result = await get_portfolio_value(
                     polymarket_client=polymarket_client,
@@ -1516,6 +1516,14 @@ class TestPortfolioBalanceHandling:
         """Portfolio value should follow available -> available_balance -> balance -> 0 fallback."""
         output = await self._run_portfolio_value(balance_payload)
         assert expected_cash_line in output
+
+    def test_extract_cash_balance_scales_raw_usdc_atomic_units_exactly(self):
+        assert _extract_cash_balance({"balance": "7488975"}) == pytest.approx(7.488975)
+
+    def test_scale_usdc_atomic_units_handles_scaled_and_raw_values(self):
+        assert scale_usdc_atomic_units(7488975, "7488975") == pytest.approx(7.488975)
+        assert scale_usdc_atomic_units(7488975.0, "7488975.0") == pytest.approx(7.488975)
+        assert scale_usdc_atomic_units(7.49, "7.49") == pytest.approx(7.49)
 
     @pytest.mark.asyncio
     async def test_get_portfolio_value_logs_permission_error_and_includes_eur(self, caplog):
@@ -1550,7 +1558,7 @@ class TestPortfolioBalanceHandling:
 
         with patch(
             "polymarket_mcp.tools.portfolio._get_usd_to_eur_rate",
-            new=AsyncMock(return_value=0.90),
+            new=AsyncMock(return_value=(0.90, False)),
         ):
             with caplog.at_level(logging.ERROR):
                 result = await get_portfolio_value(
@@ -1561,7 +1569,10 @@ class TestPortfolioBalanceHandling:
                 )
 
         output = result[0].text
-        assert "permissions/credentials" in caplog.text
+        assert (
+            "Failed to fetch positions via get_user_positions due to permissions/credentials"
+            in caplog.text
+        )
         assert "Cash Balance (USDC): $7.49" in output
         assert "TOTAL PORTFOLIO VALUE (EUR): €7.73" in output
 
@@ -1595,7 +1606,7 @@ class TestPortfolioBalanceHandling:
         ):
             with patch(
                 "polymarket_mcp.tools.portfolio._get_usd_to_eur_rate",
-                new=AsyncMock(return_value=1.0),
+                new=AsyncMock(return_value=(1.0, True)),
             ):
                 await get_portfolio_value(
                     polymarket_client=polymarket_client,

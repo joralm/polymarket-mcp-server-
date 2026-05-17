@@ -38,14 +38,13 @@ from .tools import (
     realtime,
 )
 from .cache import create_cache
+from .utils.usdc import scale_usdc_atomic_units
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("polymarket_mcp.server")
-_USDC_DECIMALS = 6
-_USDC_SCALE = 10**_USDC_DECIMALS
 
 # Global instances
 server = Server("polymarket-trading")
@@ -211,19 +210,12 @@ async def _check_geoblock_status(geoblock_url: Optional[str]) -> Optional[bool]:
 
 def _extract_available_balance(balance_payload: Any) -> Optional[float]:
     """Extract available/spendable USDC balance from payload variants."""
-    def _scale_if_atomic(parsed: float, raw_token: Optional[str] = None) -> float:
-        token = (raw_token or "").strip().lower()
-        is_integer_like = parsed.is_integer() and "." not in token and "e" not in token
-        if is_integer_like and abs(parsed) >= _USDC_SCALE:
-            return parsed / _USDC_SCALE
-        return parsed
-
     if isinstance(balance_payload, (int, float)):
-        return _scale_if_atomic(float(balance_payload))
+        return scale_usdc_atomic_units(float(balance_payload), str(balance_payload))
     if isinstance(balance_payload, str):
         try:
             cleaned = balance_payload.replace(",", "").strip()
-            return _scale_if_atomic(float(cleaned), cleaned)
+            return scale_usdc_atomic_units(float(cleaned), cleaned)
         except ValueError:
             return None
     if not isinstance(balance_payload, dict):
@@ -253,7 +245,7 @@ def _extract_available_balance(balance_payload: Any) -> Optional[float]:
             continue
         try:
             cleaned = str(value).replace(",", "").strip()
-            return _scale_if_atomic(float(cleaned), cleaned)
+            return scale_usdc_atomic_units(float(cleaned), cleaned)
         except ValueError:
             continue
     return None

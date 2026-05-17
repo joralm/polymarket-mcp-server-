@@ -18,10 +18,10 @@ import httpx
 import mcp.types as types
 
 from ..cache import CacheBackend, MemoryCache
+from ..utils.usdc import scale_usdc_atomic_units
 
 logger = logging.getLogger(__name__)
-_USDC_DECIMALS = 6
-_USDC_SCALE = 10**_USDC_DECIMALS
+_FX_USD_EUR_URL = "https://api.frankfurter.app/latest"
 
 # Cache namespace for portfolio data
 _CACHE_NS = "portfolio:"
@@ -79,17 +79,10 @@ def _set_portfolio_cache(cache: CacheBackend) -> None:
 
 def _coerce_balance_number(value: Any) -> Optional[float]:
     """Parse balance values from numeric strings and currency-formatted text."""
-    def _scale_if_atomic(parsed: float, raw_token: Optional[str] = None) -> float:
-        token = (raw_token or "").strip().lower()
-        is_integer_like = parsed.is_integer() and "." not in token and "e" not in token
-        if is_integer_like and abs(parsed) >= _USDC_SCALE:
-            return parsed / _USDC_SCALE
-        return parsed
-
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        return _scale_if_atomic(float(value))
+        return scale_usdc_atomic_units(float(value), str(value))
     if isinstance(value, str):
         cleaned = value.strip().replace(",", "")
         match = re.search(r"(?<![0-9.])[+-]?(?:\d+\.\d+|\d+|\.\d+)(?![0-9.])", cleaned)
@@ -97,7 +90,7 @@ def _coerce_balance_number(value: Any) -> Optional[float]:
             return None
         try:
             parsed = float(match.group(0))
-            return _scale_if_atomic(parsed, match.group(0))
+            return scale_usdc_atomic_units(parsed, match.group(0))
         except ValueError:
             return None
     return None
@@ -177,12 +170,18 @@ async def _fetch_positions_for_portfolio_summary(polymarket_client, rate_limiter
     """Fetch positions for portfolio summary with user-positions priority and resilient fallbacks."""
     from ..utils.rate_limiter import EndpointCategory
 
+    async def _call_maybe_await(fn, *args):
+        result = fn(*args)
+        return await result if inspect.isawaitable(result) else result
+
     get_user_positions_fn = getattr(polymarket_client, "get_user_positions", None)
     if callable(get_user_positions_fn):
         try:
             await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
-            result = get_user_positions_fn(portfolio_user)
-            positions = await result if inspect.isawaitable(result) else result
+            try:
+                positions = await _call_maybe_await(get_user_positions_fn, portfolio_user)
+            except TypeError:
+                positions = await _call_maybe_await(get_user_positions_fn)
             if isinstance(positions, list):
                 return positions
         except Exception as e:
@@ -198,8 +197,10 @@ async def _fetch_positions_for_portfolio_summary(polymarket_client, rate_limiter
     if callable(get_positions_fn):
         try:
             await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
-            result = get_positions_fn()
-            positions = await result if inspect.isawaitable(result) else result
+            try:
+                positions = await _call_maybe_await(get_positions_fn)
+            except TypeError:
+                positions = await _call_maybe_await(get_positions_fn, portfolio_user)
             if isinstance(positions, list):
                 return positions
         except Exception as e:
@@ -233,12 +234,12 @@ async def _fetch_positions_for_portfolio_summary(polymarket_client, rate_limiter
         raise
 
 
-async def _get_usd_to_eur_rate() -> float:
-    """Fetch USD->EUR conversion rate, falling back to 1.0 when unavailable."""
+async def _get_usd_to_eur_rate() -> Tuple[float, bool]:
+    """Fetch USD->EUR conversion rate, returning (rate, used_fallback_parity)."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
-                "https://api.frankfurter.app/latest",
+                _FX_USD_EUR_URL,
                 params={"from": "USD", "to": "EUR"},
             )
             response.raise_for_status()
@@ -248,10 +249,10 @@ async def _get_usd_to_eur_rate() -> float:
             if eur_rate is not None:
                 parsed_rate = float(eur_rate)
                 if parsed_rate > 0:
-                    return parsed_rate
+                    return parsed_rate, False
     except Exception as e:
         logger.warning("Failed to fetch USD->EUR conversion rate; using fallback parity: %s", e)
-    return 1.0
+    return 1.0, True
 
 
 async def get_all_positions(
@@ -680,7 +681,7 @@ async def get_portfolio_value(
 
         # Total value
         total_value = cash_balance + position_value + pending_value
-        usd_to_eur_rate = await _get_usd_to_eur_rate()
+        usd_to_eur_rate, used_fallback_fx = await _get_usd_to_eur_rate()
         total_value_eur = total_value * usd_to_eur_rate
 
         # Format output
@@ -695,6 +696,11 @@ async def get_portfolio_value(
             f"TOTAL PORTFOLIO VALUE: ${total_value:.2f}",
             f"TOTAL PORTFOLIO VALUE (EUR): €{total_value_eur:.2f}",
             f"FX Rate (USD→EUR): {usd_to_eur_rate:.4f}",
+            (
+                "FX Rate Source: fallback parity (1.0) due to unavailable quote"
+                if used_fallback_fx
+                else "FX Rate Source: live market quote"
+            ),
             ""
         ]
 
