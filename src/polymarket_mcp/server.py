@@ -38,6 +38,7 @@ from .tools import (
     realtime,
 )
 from .cache import create_cache
+from .utils.usdc import scale_usdc_atomic_units
 
 # Configure logging
 logging.basicConfig(
@@ -114,7 +115,7 @@ def _log_docker_login_report() -> None:
         logger.info("  To enable FULL mode in Docker, ensure:")
         logger.info("    1) POLYGON_PRIVATE_KEY matches POLYGON_ADDRESS")
         logger.info("    2) POLYMARKET_FUNDER is the wallet that holds UI funds/positions")
-        logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
+        logger.info("    3) POLYMARKET_SIGNATURE_TYPE is 0 (EOA direct) or 3 (deposit wallet)")
         logger.info(
             "    4) POLYMARKET_RELAYER_KEY is set and secret/passphrase are valid "
             "(or not provided for derived mode)"
@@ -210,10 +211,11 @@ async def _check_geoblock_status(geoblock_url: Optional[str]) -> Optional[bool]:
 def _extract_available_balance(balance_payload: Any) -> Optional[float]:
     """Extract available/spendable USDC balance from payload variants."""
     if isinstance(balance_payload, (int, float)):
-        return float(balance_payload)
+        return scale_usdc_atomic_units(float(balance_payload), str(balance_payload))
     if isinstance(balance_payload, str):
         try:
-            return float(balance_payload.replace(",", "").strip())
+            cleaned = balance_payload.replace(",", "").strip()
+            return scale_usdc_atomic_units(float(cleaned), cleaned)
         except ValueError:
             return None
     if not isinstance(balance_payload, dict):
@@ -242,7 +244,8 @@ def _extract_available_balance(balance_payload: Any) -> Optional[float]:
         if value in (None, ""):
             continue
         try:
-            return float(str(value).replace(",", "").strip())
+            cleaned = str(value).replace(",", "").strip()
+            return scale_usdc_atomic_units(float(cleaned), cleaned)
         except ValueError:
             continue
     return None

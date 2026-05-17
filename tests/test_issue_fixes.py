@@ -9,8 +9,8 @@ Tests for GitHub issue fixes (#2, #6, #10).
 import pytest
 import json
 import os
+import logging
 import httpx
-from pydantic import ValidationError
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 
@@ -19,8 +19,9 @@ from py_clob_client_v2.clob_types import ApiCreds, AssetType, OrderBookSummary, 
 from py_clob_client_v2.exceptions import PolyApiException
 from polymarket_mcp.auth.client import PolymarketClient
 from polymarket_mcp.config import PolymarketConfig, load_config
-from polymarket_mcp.tools.portfolio import get_portfolio_value
+from polymarket_mcp.tools.portfolio import get_portfolio_value, _extract_cash_balance
 from polymarket_mcp.tools.trading import TradingTools
+from polymarket_mcp.utils.usdc import scale_usdc_atomic_units
 from polymarket_mcp.utils.websocket_manager import WebSocketManager
 
 # ---------------------------------------------------------------------------
@@ -569,13 +570,21 @@ class TestWalletConfigFlow:
         assert cfg.POLYGON_PRIVATE_KEY == ""
         assert cfg.POLYGON_ADDRESS == ""
 
-    def test_config_rejects_non_deposit_signature_flow(self):
-        with pytest.raises(ValueError, match="must be 3"):
+    def test_config_rejects_unsupported_signature_type(self):
+        with pytest.raises(ValueError, match="must be 0 .* or 3"):
             PolymarketConfig(
                 POLYGON_PRIVATE_KEY="0" * 64,
                 POLYGON_ADDRESS="0x" + "1" * 40,
                 POLYMARKET_SIGNATURE_TYPE=1,
             )
+
+    def test_config_accepts_eoa_signature_flow(self):
+        cfg = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "1" * 40,
+            POLYMARKET_SIGNATURE_TYPE=0,
+        )
+        assert cfg.POLYMARKET_SIGNATURE_TYPE == 0
 
     @pytest.mark.asyncio
     async def test_web_dashboard_initializes_client_with_wallet_and_api_credentials(self):
@@ -984,6 +993,23 @@ class TestSDKCompatibility:
 
         assert balance["balance"] == "0.93"
         assert balance["available"] == "0.93"
+        assert balance["currency"] == "USDC"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_scales_raw_usdc_atomic_units(self):
+        """Raw USDC atomic units (6 decimals) should be normalized before formatting."""
+        client = self._build_client()
+
+        class AtomicUnitsClient:
+            def get_balance_allowance(self, params):
+                assert params.asset_type == AssetType.COLLATERAL
+                return {"available": "7488975", "balance": "7488975"}
+
+        client.client = AtomicUnitsClient()
+        balance = await client.get_balance()
+
+        assert balance["balance"] == "7.488975"
+        assert balance["available"] == "7.488975"
         assert balance["currency"] == "USDC"
 
     @pytest.mark.asyncio
@@ -1414,6 +1440,37 @@ class TestClobClientSignatureType:
         assert captured_args.get("signature_type") == 3
         assert captured_args.get("funder") == "0x" + "b" * 40
 
+    def test_initialize_client_signature_type_0_forces_eoa_funder(self):
+        """EOA direct mode must use signer EOA as funder."""
+        captured_args = {}
+
+        def fake_clob_init(self_inner, **kwargs):
+            captured_args.update(kwargs)
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = None
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                funder="0x" + "b" * 40,
+                signature_type=0,
+            )
+
+        assert captured_args.get("signature_type") == 0
+        assert captured_args.get("funder") == "0x" + "a" * 40
+
     @pytest.mark.asyncio
     async def test_get_balance_returns_nonzero_with_poly_proxy_type(self):
         """balance-allowance response is forwarded correctly when signature type is correct."""
@@ -1468,12 +1525,16 @@ class TestPortfolioBalanceHandling:
         with patch(
             "polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm
         ):
-            result = await get_portfolio_value(
-                polymarket_client=polymarket_client,
-                rate_limiter=rate_limiter,
-                config=config,
-                include_breakdown=True,
-            )
+            with patch(
+                "polymarket_mcp.tools.portfolio._get_usd_to_eur_rate",
+                new=AsyncMock(return_value=(1.0, True)),
+            ):
+                result = await get_portfolio_value(
+                    polymarket_client=polymarket_client,
+                    rate_limiter=rate_limiter,
+                    config=config,
+                    include_breakdown=True,
+                )
 
         return result[0].text
 
@@ -1484,6 +1545,7 @@ class TestPortfolioBalanceHandling:
             ({"available": "0.93", "balance": "0"}, "Cash Balance (USDC): $0.93"),
             ({"available_balance": "1.10", "balance": "0"}, "Cash Balance (USDC): $1.10"),
             ({"balance": "2.50"}, "Cash Balance (USDC): $2.50"),
+            ({"balance": "7488975"}, "Cash Balance (USDC): $7.49"),
             ({}, "Cash Balance (USDC): $0.00"),
         ],
     )
@@ -1493,6 +1555,65 @@ class TestPortfolioBalanceHandling:
         """Portfolio value should follow available -> available_balance -> balance -> 0 fallback."""
         output = await self._run_portfolio_value(balance_payload)
         assert expected_cash_line in output
+
+    def test_extract_cash_balance_scales_raw_usdc_atomic_units_exactly(self):
+        assert _extract_cash_balance({"balance": "7488975"}) == pytest.approx(7.488975)
+
+    def test_scale_usdc_atomic_units_handles_scaled_and_raw_values(self):
+        assert scale_usdc_atomic_units(7488975, "7488975") == pytest.approx(7.488975)
+        assert scale_usdc_atomic_units(7488975.0, "7488975.0") == pytest.approx(7.488975)
+        assert scale_usdc_atomic_units(7.49, "7.49") == pytest.approx(7.49)
+
+    @pytest.mark.asyncio
+    async def test_get_portfolio_value_logs_permission_error_and_includes_eur(self, caplog):
+        """Portfolio summary should log explicit position-permission failures and include EUR total."""
+        polymarket_client = MagicMock()
+        polymarket_client.get_balance = AsyncMock(return_value={"available": "7488975"})
+        polymarket_client.get_orders = AsyncMock(return_value=[])
+        polymarket_client.get_funder_address = MagicMock(return_value="0x" + "2" * 40)
+        polymarket_client.get_user_positions = AsyncMock(
+            side_effect=RuntimeError("READ-ONLY mode: L2 API credentials required")
+        )
+        polymarket_client.get_positions = AsyncMock(
+            return_value=[
+                {
+                    "asset_id": "token_123",
+                    "market": "market_123",
+                    "outcome": "Yes",
+                    "size": "2",
+                    "average_price": "0.50",
+                }
+            ]
+        )
+        polymarket_client.get_orderbook = AsyncMock(
+            return_value={"bids": [{"price": "0.50"}], "asks": [{"price": "0.60"}]}
+        )
+
+        rate_limiter = MagicMock()
+        rate_limiter.acquire = AsyncMock(return_value=0.0)
+
+        config = MagicMock()
+        config.POLYGON_ADDRESS = "0x" + "1" * 40
+
+        with patch(
+            "polymarket_mcp.tools.portfolio._get_usd_to_eur_rate",
+            new=AsyncMock(return_value=(0.90, False)),
+        ):
+            with caplog.at_level(logging.ERROR):
+                result = await get_portfolio_value(
+                    polymarket_client=polymarket_client,
+                    rate_limiter=rate_limiter,
+                    config=config,
+                    include_breakdown=False,
+                )
+
+        output = result[0].text
+        assert (
+            "Failed to fetch positions via get_user_positions due to permissions/credentials"
+            in caplog.text
+        )
+        assert "Cash Balance (USDC): $7.49" in output
+        assert "TOTAL PORTFOLIO VALUE (EUR): €7.73" in output
 
     @pytest.mark.asyncio
     async def test_get_portfolio_value_uses_funder_wallet_for_positions(self):
@@ -1522,12 +1643,16 @@ class TestPortfolioBalanceHandling:
         with patch(
             "polymarket_mcp.tools.portfolio.httpx.AsyncClient", return_value=async_client_cm
         ):
-            await get_portfolio_value(
-                polymarket_client=polymarket_client,
-                rate_limiter=rate_limiter,
-                config=config,
-                include_breakdown=True,
-            )
+            with patch(
+                "polymarket_mcp.tools.portfolio._get_usd_to_eur_rate",
+                new=AsyncMock(return_value=(1.0, True)),
+            ):
+                await get_portfolio_value(
+                    polymarket_client=polymarket_client,
+                    rate_limiter=rate_limiter,
+                    config=config,
+                    include_breakdown=True,
+                )
 
         assert mock_http_client.get.await_args.kwargs["params"]["user"] == "0x" + "2" * 40
 
@@ -1627,6 +1752,39 @@ class TestMarketAnalysisIdentifierCompatibility:
             assert payload["available_balance_usdc"] == "1500.00"
             assert payload["endpoints"]["clob_api"] == fake_config.CLOB_API_URL
             assert payload["endpoints"]["gamma_api"] == fake_config.GAMMA_API_URL
+        finally:
+            server_module.config = saved["config"]
+            server_module.polymarket_client = saved["polymarket_client"]
+
+    @pytest.mark.asyncio
+    async def test_get_server_status_scales_raw_usdc_atomic_balance(self):
+        import polymarket_mcp.server as server_module
+
+        saved = {
+            "config": server_module.config,
+            "polymarket_client": server_module.polymarket_client,
+        }
+
+        fake_config = MagicMock()
+        fake_config.POLYMARKET_ENV = "testnet"
+        fake_config.POLYMARKET_CHAIN_ID = 80002
+        fake_config.CLOB_API_URL = "https://clob-testnet.polytest.cloud"
+        fake_config.GAMMA_API_URL = "https://gcomm-api.polytest.cloud"
+        fake_config.effective_funder = "0x" + "2" * 40
+
+        fake_client = MagicMock()
+        fake_client.get_balance = AsyncMock(return_value={"available": "7488975"})
+        fake_client.has_api_credentials.return_value = True
+        fake_client.has_verified_api_credentials.return_value = True
+
+        try:
+            server_module.config = fake_config
+            server_module.polymarket_client = fake_client
+
+            result = await server_module.call_tool("get_server_status", {})
+            payload = json.loads(result[0].text)
+
+            assert payload["available_balance_usdc"] == "7.49"
         finally:
             server_module.config = saved["config"]
             server_module.polymarket_client = saved["polymarket_client"]

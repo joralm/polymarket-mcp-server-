@@ -271,7 +271,9 @@ POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock
 **Wallet auth mapping (important for MetaMask / UI balance parity):**
 - `POLYGON_ADDRESS` = signer EOA / private key owner.
 - `POLYMARKET_FUNDER` = Polymarket deposit/proxy wallet that actually holds balance and positions in the UI.
-- `POLYMARKET_SIGNATURE_TYPE` = must be `3` (deposit wallet / `POLY_1271`, MetaMask flow).
+- `POLYMARKET_SIGNATURE_TYPE`:
+  - `0` = EOA direct mode (funder is signer EOA / `POLYGON_ADDRESS`)
+  - `3` = deposit wallet / `POLY_1271` (MetaMask flow)
 
 **Recommended Safety Limits:**
 ```env

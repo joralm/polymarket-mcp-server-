@@ -24,6 +24,7 @@ from py_clob_client_v2.clob_types import (
 from py_clob_client_v2.exceptions import PolyApiException
 
 from .signer import OrderSigner
+from ..utils.usdc import scale_usdc_atomic_units
 
 logger = logging.getLogger(__name__)
 
@@ -117,15 +118,24 @@ class PolymarketClient:
         """
         self.private_key = private_key
         self.address = address.lower()
-        self.funder_address = (funder or address).lower()
+        requested_funder = (funder or address).lower()
         self.chain_id = chain_id
-        if signature_type != 3:
+        if signature_type not in {0, 3}:
             logger.warning(
-                "signature_type=%s requested, but this server enforces MetaMask deposit-wallet flow "
-                "(signature_type=3). Overriding to 3.",
+                "Unsupported signature_type=%s requested; defaulting to 3 (POLY_1271/deposit wallet).",
                 signature_type,
             )
-        self.signature_type = 3
+            signature_type = 3
+        self.signature_type = signature_type
+        if self.signature_type == 0 and requested_funder != self.address:
+            logger.warning(
+                "signature_type=0 (EOA direct) requires funder=signer address. "
+                "Overriding funder %s -> %s.",
+                requested_funder,
+                self.address,
+            )
+            requested_funder = self.address
+        self.funder_address = requested_funder
         self.host = host
 
         # Initialize order signer
@@ -789,7 +799,7 @@ class PolymarketClient:
         if value is None:
             return None
         if isinstance(value, (int, float)):
-            return float(value)
+            return scale_usdc_atomic_units(float(value), str(value))
         if isinstance(value, str):
             cleaned = value.strip().replace(",", "")
             # Extract the first signed decimal number from values like
@@ -799,7 +809,8 @@ class PolymarketClient:
             if not match:
                 return None
             try:
-                return float(match.group(0))
+                parsed = float(match.group(0))
+                return scale_usdc_atomic_units(parsed, match.group(0))
             except ValueError:
                 return None
         return None

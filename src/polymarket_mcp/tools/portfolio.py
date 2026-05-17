@@ -9,6 +9,7 @@ Implements 8 tools for portfolio management:
 """
 import logging
 import re
+import inspect
 from typing import Dict, Any, List, Optional, Tuple, Literal
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -17,8 +18,10 @@ import httpx
 import mcp.types as types
 
 from ..cache import CacheBackend, MemoryCache
+from ..utils.usdc import scale_usdc_atomic_units
 
 logger = logging.getLogger(__name__)
+_FX_USD_EUR_URL = "https://api.frankfurter.app/latest"
 
 # Cache namespace for portfolio data
 _CACHE_NS = "portfolio:"
@@ -79,14 +82,15 @@ def _coerce_balance_number(value: Any) -> Optional[float]:
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return scale_usdc_atomic_units(float(value), str(value))
     if isinstance(value, str):
         cleaned = value.strip().replace(",", "")
         match = re.search(r"(?<![0-9.])[+-]?(?:\d+\.\d+|\d+|\.\d+)(?![0-9.])", cleaned)
         if not match:
             return None
         try:
-            return float(match.group(0))
+            parsed = float(match.group(0))
+            return scale_usdc_atomic_units(parsed, match.group(0))
         except ValueError:
             return None
     return None
@@ -142,6 +146,113 @@ def _get_portfolio_funder_address(polymarket_client, config) -> str:
     if effective_funder:
         return str(effective_funder).lower()
     return str(config.POLYGON_ADDRESS).lower()
+
+
+def _is_permission_error(exc: Exception) -> bool:
+    """Return True when an exception likely indicates missing/insufficient credentials."""
+    error_text = str(exc).lower()
+    return any(
+        marker in error_text
+        for marker in (
+            "read-only",
+            "l2 api credentials required",
+            "credential",
+            "permission",
+            "unauthorized",
+            "forbidden",
+            "401",
+            "403",
+        )
+    )
+
+
+async def _fetch_positions_for_portfolio_summary(polymarket_client, rate_limiter, portfolio_user: str) -> List[Dict[str, Any]]:
+    """Fetch positions for portfolio summary with user-positions priority and resilient fallbacks."""
+    from ..utils.rate_limiter import EndpointCategory
+
+    async def _call_maybe_await(fn, *args):
+        result = fn(*args)
+        return await result if inspect.isawaitable(result) else result
+
+    get_user_positions_fn = getattr(polymarket_client, "get_user_positions", None)
+    if callable(get_user_positions_fn):
+        try:
+            await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
+            try:
+                positions = await _call_maybe_await(get_user_positions_fn, portfolio_user)
+            except TypeError:
+                positions = await _call_maybe_await(get_user_positions_fn)
+            if isinstance(positions, list):
+                return positions
+        except Exception as e:
+            if _is_permission_error(e):
+                logger.error(
+                    "Failed to fetch positions via get_user_positions due to permissions/credentials: %s",
+                    e,
+                )
+            else:
+                logger.warning("Failed to fetch positions via get_user_positions: %s", e)
+
+    get_positions_fn = getattr(polymarket_client, "get_positions", None)
+    if callable(get_positions_fn):
+        try:
+            await rate_limiter.acquire(EndpointCategory.CLOB_GENERAL)
+            try:
+                positions = await _call_maybe_await(get_positions_fn)
+            except TypeError:
+                positions = await _call_maybe_await(get_positions_fn, portfolio_user)
+            if isinstance(positions, list):
+                return positions
+        except Exception as e:
+            if _is_permission_error(e):
+                logger.error(
+                    "Failed to fetch positions via get_positions due to permissions/credentials: %s",
+                    e,
+                )
+            else:
+                logger.warning("Failed to fetch positions via get_positions: %s", e)
+
+    try:
+        await rate_limiter.acquire(EndpointCategory.DATA_API)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": portfolio_user},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        if _is_permission_error(e):
+            logger.error(
+                "Failed to fetch positions from Data API due to permissions/credentials: %s",
+                e,
+            )
+        else:
+            logger.error("Failed to fetch positions from Data API: %s", e)
+        raise
+
+
+async def _get_usd_to_eur_rate() -> Tuple[float, bool]:
+    """Fetch USD->EUR conversion rate, returning (rate, used_fallback_parity)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                _FX_USD_EUR_URL,
+                params={"from": "USD", "to": "EUR"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            rates = payload.get("rates") if isinstance(payload, dict) else None
+            eur_rate = rates.get("EUR") if isinstance(rates, dict) else None
+            if eur_rate is not None:
+                parsed_rate = float(eur_rate)
+                if parsed_rate > 0:
+                    return parsed_rate, False
+    except Exception as e:
+        logger.warning("Failed to fetch USD->EUR conversion rate; using fallback parity: %s", e)
+    return 1.0, True
 
 
 async def get_all_positions(
@@ -513,16 +624,12 @@ async def get_portfolio_value(
         balance_data = await polymarket_client.get_balance()
         cash_balance = _extract_cash_balance(balance_data)
 
-        # Get all positions
-        await rate_limiter.acquire(EndpointCategory.DATA_API)
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://data-api.polymarket.com/positions",
-                params={"user": portfolio_user},
-                timeout=10.0
-            )
-            response.raise_for_status()
-            positions = response.json()
+        # Get positions (prefer SDK user positions, then fallbacks)
+        positions = await _fetch_positions_for_portfolio_summary(
+            polymarket_client=polymarket_client,
+            rate_limiter=rate_limiter,
+            portfolio_user=portfolio_user,
+        )
 
         # Get open orders
         try:
@@ -574,6 +681,8 @@ async def get_portfolio_value(
 
         # Total value
         total_value = cash_balance + position_value + pending_value
+        usd_to_eur_rate, used_fallback_fx = await _get_usd_to_eur_rate()
+        total_value_eur = total_value * usd_to_eur_rate
 
         # Format output
         output_lines = [
@@ -585,6 +694,13 @@ async def get_portfolio_value(
             f"Pending Orders Value: ${pending_value:.2f}",
             "-" * 80,
             f"TOTAL PORTFOLIO VALUE: ${total_value:.2f}",
+            f"TOTAL PORTFOLIO VALUE (EUR): €{total_value_eur:.2f}",
+            f"FX Rate (USD→EUR): {usd_to_eur_rate:.4f}",
+            (
+                "FX Rate Source: fallback parity (1.0) due to unavailable quote"
+                if used_fallback_fx
+                else "FX Rate Source: live market quote"
+            ),
             ""
         ]
 
