@@ -31,6 +31,7 @@ from ..utils.usdc import scale_usdc_atomic_units
 logger = logging.getLogger(__name__)
 
 _CRED_BANNER = "=" * 70
+MAX_UINT256 = 2**256 - 1
 
 
 def _log_new_credentials(api_key: str, api_secret: str, passphrase: str, reason: str) -> None:
@@ -189,11 +190,11 @@ class PolymarketClient:
         if self.signature_type in {2, "2"} and self.client is not None:
             try:
                 logger.info(
-                    "Modo Smart Proxy (Tipo 2) ativo. A verificar e aprovar allowances na blockchain..."
+                    "Smart Proxy mode (type 2) active. Verifying allowances on-chain..."
                 )
                 self.auto_approve_allowances()
             except Exception as e:
-                logger.error(f"Erro na execução automática do auto-approve: {e}")
+                logger.error(f"Error while running startup auto-approve: {e}")
 
         logger.info(
             f"PolymarketClient initialized for signer {self.address} "
@@ -249,8 +250,7 @@ class PolymarketClient:
 
     def auto_approve_allowances(self) -> bool:
         """
-        Executado automaticamente no arranque para garantir que o contrato do
-        Exchange da Polymarket tem permissão para movimentar o USDC da carteira.
+        Run on startup to ensure the Polymarket exchange contract can spend USDC.
         """
         from eth_utils import to_checksum_address
 
@@ -309,19 +309,16 @@ class PolymarketClient:
             ).call()
 
             if current_allowance > 1_000_000 * (10**6):
-                logger.info("Allowance já é suficiente (%s). Passar à frente.", current_allowance)
+                logger.info("Allowance is already sufficient (%s). Skipping.", current_allowance)
                 return True
 
             logger.warning(
-                "Allowance insuficiente detectada (%s). A enviar transação de Approve...",
+                "Insufficient allowance detected (%s). Sending approve transaction...",
                 current_allowance,
             )
 
-            max_allowance = (
-                115792089237316195423570985008687907853269984665640564039457584007913129639935
-            )
             nonce = w3.eth.get_transaction_count(account_address)
-            approve_call = usdc_contract.functions.approve(spender_address, max_allowance)
+            approve_call = usdc_contract.functions.approve(spender_address, MAX_UINT256)
             tx = approve_call.build_transaction(
                 {
                     "from": account_address,
@@ -340,14 +337,14 @@ class PolymarketClient:
                 raw_transaction = signed_tx.rawTransaction
 
             tx_hash = w3.eth.send_raw_transaction(raw_transaction)
-            logger.info("Transação de Approve submetida à Polygon. Hash: %s", tx_hash.hex())
+            logger.info("Approve transaction submitted to Polygon. Hash: %s", tx_hash.hex())
 
             w3.eth.wait_for_transaction_receipt(tx_hash)
-            logger.info("Contratos da Polymarket autorizados com sucesso no arranque!")
+            logger.info("Polymarket exchange allowance approved successfully on startup.")
             return True
 
         except Exception as e:
-            logger.error(f"Falha no auto_approve_allowances de arranque: {str(e)}")
+            logger.error(f"Startup auto_approve_allowances failed: {str(e)}")
             return False
 
     def get_client(self) -> ClobClient:
