@@ -166,9 +166,10 @@ Use this exact checklist:
   ```
 
 #### 5) CLOB login credentials (`POLYMARKET_RELAYER_*` preferred; `POLYMARKET_API_*` legacy aliases)
-- Option A (recommended): leave empty on first start and let server derive automatically.
-- Option B: create manually in Polymarket UI (Settings → API) and paste values.
-- After auto-generation, copy credentials from logs and persist in `.env`.
+- `POLYMARKET_RELAYER_KEY` (UUID from Polymarket UI) is required.
+- If `POLYMARKET_RELAYER_SECRET` and `POLYMARKET_RELAYER_PASSPHRASE` are both set, startup uses **Static Relayer Credentials** (no key derivation).
+- If either secret or passphrase is missing/empty, startup uses **Derived Wallet Credentials** and derives secret/passphrase from `POLYGON_PRIVATE_KEY`.
+- Container logs show which mode was selected at startup.
 
 #### 6) Enable debug logs to troubleshoot auth mapping
 - Set:
@@ -200,13 +201,12 @@ LOG_LEVEL=DEBUG
 
 ## Auto-Generated API Credentials
 
-If no credential triplet is set (`POLYMARKET_RELAYER_*` or `POLYMARKET_API_*`) in your `.env` / docker-compose
-environment, the server **automatically derives fresh credentials** from your wallet private key
-on every startup.
+If `POLYMARKET_RELAYER_KEY` is set but secret/passphrase are not fully set, the server
+**automatically derives secret + passphrase** from your wallet private key at startup.
 
 ### When does this happen?
 
-- **First run** – no API key variables are configured.
+- **First run** – relayer key exists but secret/passphrase are empty.
 - **HTTP 401 from Polymarket** – the stored credentials have expired or become invalid and
   the server re-derives them automatically.
 

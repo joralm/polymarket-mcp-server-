@@ -88,9 +88,16 @@ def _log_docker_login_report() -> None:
     has_api_secret = bool(config.effective_api_secret)
     has_passphrase = bool(config.effective_api_passphrase)
     has_l2_triplet = has_api_key and has_api_secret and has_passphrase
+    l2_auth_mode = getattr(config, "l2_auth_mode", "missing")
     full_mode = _has_authenticated_trading_access()
 
     logger.info("DOCKER LOGIN REPORT")
+    if l2_auth_mode == "static":
+        logger.info("  L2 auth bootstrap: Static Relayer Credentials")
+    elif l2_auth_mode == "derived":
+        logger.info("  L2 auth bootstrap: Derived Wallet Credentials")
+    else:
+        logger.info("  L2 auth bootstrap: Missing Relayer Key")
     logger.info("  signer (POLYGON_ADDRESS): %s", config.POLYGON_ADDRESS)
     logger.info("  funder (POLYMARKET_FUNDER/effective): %s", config.effective_funder)
     logger.info("  signature_type: %s", config.POLYMARKET_SIGNATURE_TYPE)
@@ -109,8 +116,8 @@ def _log_docker_login_report() -> None:
         logger.info("    2) POLYMARKET_FUNDER is the wallet that holds UI funds/positions")
         logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
         logger.info(
-            "    4) L2 CLOB/relayer credentials are valid or allow auto-derivation on startup "
-            "(POLYMARKET_RELAYER_* preferred, POLYMARKET_API_* supported)"
+            "    4) POLYMARKET_RELAYER_KEY is set and secret/passphrase are valid "
+            "(or not provided for derived mode)"
         )
         logger.info("    5) LOG_LEVEL=DEBUG to inspect auth diagnostics")
 
@@ -640,6 +647,11 @@ async def initialize_server() -> None:
             polymarket_client = None
         else:
             logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
+            if not config.effective_api_key:
+                raise RuntimeError(
+                    "Missing Relayer UUID. Set POLYMARKET_RELAYER_KEY "
+                    "(or legacy POLYMARKET_API_KEY) for L2 authentication."
+                )
             logger.debug(
                 "POLYMARKET_API_KEY is %s",
                 "configured" if config.POLYMARKET_API_KEY else "not set",

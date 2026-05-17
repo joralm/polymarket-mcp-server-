@@ -263,8 +263,10 @@ POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock
   - `POLYMARKET_API_KEY`
   - `POLYMARKET_API_SECRET`
   - `POLYMARKET_PASSPHRASE`
-- These values come from Polymarket UI (`Settings → API`) and are used for **L2 authentication** (CLOB login + request signing).
-- If not provided, the server derives them at startup from your wallet and logs the values to persist in `.env`.
+- `POLYMARKET_RELAYER_KEY` (UUID from Polymarket UI) is required for L2 bootstrap.
+- If `RELAYER_SECRET` + `RELAYER_PASSPHRASE` are set, startup uses **Static Relayer Credentials** (no derivation).
+- If `RELAYER_SECRET` or `RELAYER_PASSPHRASE` is empty, startup uses **Derived Wallet Credentials** and derives secret/passphrase from `POLYGON_PRIVATE_KEY` at runtime.
+- The server prints a startup banner with the selected mode: `Static Relayer Credentials` or `Derived Wallet Credentials`.
 
 **Wallet auth mapping (important for MetaMask / UI balance parity):**
 - `POLYGON_ADDRESS` = signer EOA / private key owner.
