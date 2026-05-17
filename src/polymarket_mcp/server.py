@@ -647,15 +647,16 @@ async def initialize_server() -> None:
             polymarket_client = None
         else:
             logger.info(f"Configuration loaded for address: {config.POLYGON_ADDRESS}")
-            if not config.effective_api_key:
-                raise RuntimeError(
-                    "Missing Relayer UUID. Set POLYMARKET_RELAYER_KEY "
-                    "(or legacy POLYMARKET_API_KEY) for L2 authentication."
+            if config.effective_api_key:
+                logger.debug(
+                    "POLYMARKET_API_KEY is %s",
+                    "configured" if config.POLYMARKET_API_KEY else "not set",
                 )
-            logger.debug(
-                "POLYMARKET_API_KEY is %s",
-                "configured" if config.POLYMARKET_API_KEY else "not set",
-            )
+            else:
+                logger.info(
+                    "No POLYMARKET_RELAYER_KEY configured — L2 trading credentials will be "
+                    "auto-derived from POLYGON_PRIVATE_KEY at startup (official SDK flow)."
+                )
             logger.debug(
                 "Wallet auth config: signer=%s funder=%s signature_type=%s",
                 config.POLYGON_ADDRESS,
