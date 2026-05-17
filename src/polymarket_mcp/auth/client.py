@@ -128,6 +128,7 @@ class PolymarketClient:
             )
             signature_type = 3
         self.signature_type = signature_type
+        self._is_type3_signature = self.signature_type == 3
         if self.signature_type == 0 and requested_funder != self.address:
             logger.warning(
                 "signature_type=0 (EOA direct) requires funder=signer address. "
@@ -149,7 +150,15 @@ class PolymarketClient:
         self._expected_api_key = api_key
         self._api_credentials_verified = False
         self._zero_balance_proxy_refresh_attempted = False
-        if api_key and api_secret and passphrase:
+        if self._is_type3_signature:
+            if api_key or api_secret or passphrase:
+                logger.info(
+                    "signature_type=3 active: ignoring configured API credentials to keep "
+                    "signer-only flow clean."
+                )
+            self._api_creds_from_config = False
+            self._allow_credential_derivation = False
+        elif api_key and api_secret and passphrase:
             self.api_creds = ApiCreds(
                 api_key=api_key, api_secret=api_secret, api_passphrase=passphrase
             )
@@ -198,7 +207,7 @@ class PolymarketClient:
             }
 
             # Add L2 credentials if available
-            if self.api_creds:
+            if self.api_creds and not self._is_type3_signature:
                 client_args["creds"] = self.api_creds
             logger.debug(
                 "Initializing ClobClient with host=%s chain_id=%s signature_type=%s signer=%s funder=%s has_l2=%s",
@@ -249,6 +258,10 @@ class PolymarketClient:
         Raises:
             Exception: If credential creation fails
         """
+        if self._is_type3_signature:
+            raise RuntimeError(
+                "signature_type=3 uses signer-only order flow and must not derive API keys."
+            )
         try:
             logger.info("Creating API credentials...")
 
@@ -429,11 +442,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials not available
         """
-        if not self.api_creds:
-            raise RuntimeError(
-                "L2 API credentials required for posting orders. "
-                "Call create_api_credentials() first."
-            )
+        self._require_l2_credentials("posting orders")
 
         try:
             # Map string order_type to OrderType enum
@@ -477,6 +486,11 @@ class PolymarketClient:
                     "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
             if self._is_signer_api_key_mismatch_error(e):
+                if self._is_type3_signature:
+                    raise RuntimeError(
+                        "Type-3 signer flow received an API-key mismatch response. "
+                        "Ensure no legacy API key headers are being injected."
+                    ) from e
                 logger.warning(
                     "Order signer/API-key mismatch detected; re-deriving API credentials and retrying once."
                 )
@@ -517,8 +531,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials not available
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required for canceling orders")
+        self._require_l2_credentials("canceling orders")
 
         try:
             response = self.client.cancel_order(OrderPayload(orderID=order_id))
@@ -540,8 +553,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials not available
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("canceling all orders")
 
         try:
             response = self.client.cancel_all()
@@ -577,11 +589,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials are not available.
         """
-        if not self.api_creds:
-            raise RuntimeError(
-                "L2 API credentials required for posting orders. "
-                "Call create_api_credentials() first."
-            )
+        self._require_l2_credentials("posting orders")
 
         try:
             order_args = MarketOrderArgsV2(
@@ -608,6 +616,11 @@ class PolymarketClient:
                     "Use a MetaMask-linked Polymarket trading wallet."
                 ) from e
             if self._is_signer_api_key_mismatch_error(e):
+                if self._is_type3_signature:
+                    raise RuntimeError(
+                        "Type-3 signer flow received an API-key mismatch response. "
+                        "Ensure no legacy API key headers are being injected."
+                    ) from e
                 logger.warning(
                     "Market-order signer/API-key mismatch detected; re-deriving API credentials and retrying once."
                 )
@@ -645,8 +658,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials are not available.
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("fetching order")
 
         try:
             order = self.client.get_order(order_id)
@@ -673,8 +685,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials are not available.
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("fetching trades")
 
         try:
             params = TradeParams(market=market, asset_id=asset_id)
@@ -706,8 +717,7 @@ class PolymarketClient:
             RuntimeError: If L2 credentials are not available.
             ValueError: If neither ``market`` nor ``asset_id`` is provided.
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("canceling market orders")
 
         if not market and not asset_id:
             raise ValueError("Either market or asset_id must be provided")
@@ -742,8 +752,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials not available
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("fetching open orders")
 
         try:
             params = OpenOrderParams(
@@ -767,8 +776,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials not available
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("fetching positions")
 
         try:
             get_positions_fn = getattr(self.client, "get_positions", None)
@@ -884,8 +892,7 @@ class PolymarketClient:
         Raises:
             RuntimeError: If L2 credentials not available
         """
-        if not self.api_creds:
-            raise RuntimeError("L2 API credentials required")
+        self._require_l2_credentials("fetching balance")
 
         try:
             logger.debug(
@@ -951,11 +958,25 @@ class PolymarketClient:
 
     def has_api_credentials(self) -> bool:
         """Check if L2 API credentials are available"""
+        if self._is_type3_signature:
+            return True
         return self.api_creds is not None
 
     def has_verified_api_credentials(self) -> bool:
         """Check if L2 credentials are present and were successfully verified."""
+        if self._is_type3_signature:
+            return True
         return self.api_creds is not None and self._api_credentials_verified
+
+    def _require_l2_credentials(self, operation: str) -> None:
+        """Enforce API-credential requirement for non-type-3 signature flows."""
+        if self._is_type3_signature:
+            return
+        if not self.api_creds:
+            raise RuntimeError(
+                f"L2 API credentials required for {operation}. "
+                "Call create_api_credentials() first."
+            )
 
     @staticmethod
     def _probe_looks_valid(balance_payload: Any) -> bool:
@@ -1018,6 +1039,8 @@ class PolymarketClient:
 
     def _reconcile_configured_api_key_with_signer(self) -> None:
         """Replace configured credentials when they don't match signer-derived API key."""
+        if self._is_type3_signature:
+            return
         if (
             not self._allow_credential_derivation
             or not self.api_creds
@@ -1099,6 +1122,12 @@ class PolymarketClient:
             Exception: If no credentials exist *and* creating new ones fails
                        (e.g. the wallet has insufficient allowance).
         """
+        if self._is_type3_signature:
+            logger.info(
+                "signature_type=3 active: skipping startup API credential validation/derivation."
+            )
+            self._api_credentials_verified = True
+            return
         if not self.api_creds:
             if not self._allow_credential_derivation:
                 raise RuntimeError(
@@ -1227,6 +1256,9 @@ class PolymarketClient:
         Raises:
             Exception: If credential derivation fails.
         """
+        if self._is_type3_signature:
+            logger.info("signature_type=3 active: credential refresh is disabled.")
+            return False
         logger.info("Refreshing API credentials via create_or_derive_api_key()...")
         old_api_key = self.api_creds.api_key if self.api_creds else None
         new_creds = self.client.create_or_derive_api_key()
