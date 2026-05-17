@@ -326,13 +326,14 @@ class PolymarketClient:
                     "chainId": self.chain_id,
                 }
             )
-            tx.setdefault("gas", approve_call.estimate_gas({"from": account_address}))
+            if "gas" not in tx:
+                tx["gas"] = approve_call.estimate_gas({"from": account_address})
 
             signed_tx = w3.eth.account.sign_transaction(
                 tx, private_key=self.private_key
             )
-            # eth-account/web3 changed the signed raw transaction attribute name
-            # from `rawTransaction` to `raw_transaction`; support both.
+            # eth-account>=0.13 exposes `raw_transaction`, while older web3/eth-account
+            # stacks may still expose `rawTransaction`; support both.
             raw_transaction = getattr(signed_tx, "raw_transaction", None)
             if raw_transaction is None:
                 raw_transaction = getattr(signed_tx, "rawTransaction", None)
