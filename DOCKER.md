@@ -82,7 +82,12 @@ Create a `.env` file in the project root:
 POLYGON_PRIVATE_KEY=0x1234...  # Your wallet private key
 POLYGON_ADDRESS=0xABCD...      # Your wallet address
 
-# Optional: Polymarket API credentials
+# Optional: CLOB/relayer login credentials (preferred names)
+POLYMARKET_RELAYER_KEY=         # Leave empty to auto-generate
+POLYMARKET_RELAYER_SECRET=      # Leave empty to auto-generate
+POLYMARKET_RELAYER_PASSPHRASE=  # Leave empty to auto-generate
+
+# Optional: legacy aliases for the same triplet
 POLYMARKET_API_KEY=            # Leave empty to auto-generate
 POLYMARKET_API_SECRET=         # Leave empty to auto-generate
 POLYMARKET_PASSPHRASE=         # Leave empty to auto-generate
@@ -114,7 +119,7 @@ REQUIRE_CONFIRMATION_ABOVE_USD=100
 **Important trading flow requirement:**
 - Use a MetaMask-linked wallet in Polymarket's **deposit wallet flow**.
 - Social-login-only accounts can be blocked from placing orders.
-- `RELAYER_API_KEY` / `RELAYER_API_KEY_ADDRESS` are not consumed by this server.
+- `POLYMARKET_RELAYER_*` and `POLYMARKET_API_*` are treated as the same CLOB login triplet (relayer names are preferred).
 
 ### MetaMask + Funder/Proxy Variables (Detailed)
 
@@ -160,7 +165,7 @@ Use this exact checklist:
   POLYMARKET_SIGNATURE_TYPE=3
   ```
 
-#### 5) API credentials (`POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_PASSPHRASE`)
+#### 5) CLOB login credentials (`POLYMARKET_RELAYER_*` preferred; `POLYMARKET_API_*` legacy aliases)
 - Option A (recommended): leave empty on first start and let server derive automatically.
 - Option B: create manually in Polymarket UI (Settings → API) and paste values.
 - After auto-generation, copy credentials from logs and persist in `.env`.
@@ -184,6 +189,9 @@ POLYGON_PRIVATE_KEY=<metamask_private_key>
 POLYGON_ADDRESS=<metamask_eoa_address>
 POLYMARKET_FUNDER=<polymarket_deposit_wallet_address>
 POLYMARKET_SIGNATURE_TYPE=3
+POLYMARKET_RELAYER_KEY=
+POLYMARKET_RELAYER_SECRET=
+POLYMARKET_RELAYER_PASSPHRASE=
 POLYMARKET_API_KEY=
 POLYMARKET_API_SECRET=
 POLYMARKET_PASSPHRASE=
@@ -192,7 +200,7 @@ LOG_LEVEL=DEBUG
 
 ## Auto-Generated API Credentials
 
-If `POLYMARKET_API_KEY` and `POLYMARKET_PASSPHRASE` are not set in your `.env` / docker-compose
+If no credential triplet is set (`POLYMARKET_RELAYER_*` or `POLYMARKET_API_*`) in your `.env` / docker-compose
 environment, the server **automatically derives fresh credentials** from your wallet private key
 on every startup.
 
@@ -219,9 +227,9 @@ Reason: No API credentials were configured — generated automatically on first 
 ======================================================================
 Copy the values below into your docker-compose.yml (or .env file):
 
-  POLYMARKET_API_KEY=<full-key-value>
-  POLYMARKET_API_SECRET=<full-secret-value>
-  POLYMARKET_PASSPHRASE=<full-passphrase-value>
+  POLYMARKET_RELAYER_KEY=<full-key-value>
+  POLYMARKET_RELAYER_SECRET=<full-secret-value>
+  POLYMARKET_RELAYER_PASSPHRASE=<full-passphrase-value>
 
 Then RESTART the container so the new credentials are picked up:
   docker compose down && docker compose up -d
@@ -245,16 +253,16 @@ Then RESTART the container so the new credentials are picked up:
 3. Copy the three printed values into your `docker-compose.yml`:
    ```yaml
    environment:
-     - POLYMARKET_API_KEY=<value from log>
-     - POLYMARKET_API_SECRET=<value from log>
-     - POLYMARKET_PASSPHRASE=<value from log>
-   ```
-   Or, if you use a `.env` file:
-   ```bash
-   POLYMARKET_API_KEY=<value from log>
-   POLYMARKET_API_SECRET=<value from log>
-   POLYMARKET_PASSPHRASE=<value from log>
-   ```
+     - POLYMARKET_RELAYER_KEY=<value from log>
+     - POLYMARKET_RELAYER_SECRET=<value from log>
+     - POLYMARKET_RELAYER_PASSPHRASE=<value from log>
+    ```
+    Or, if you use a `.env` file:
+    ```bash
+   POLYMARKET_RELAYER_KEY=<value from log>
+   POLYMARKET_RELAYER_SECRET=<value from log>
+   POLYMARKET_RELAYER_PASSPHRASE=<value from log>
+    ```
 4. Restart the container:
    ```bash
    docker compose down && docker compose up -d

@@ -55,6 +55,15 @@ class PolymarketConfig(BaseSettings):
     POLYMARKET_API_KEY_NAME: Optional[str] = Field(
         default=None, description="API key name/identifier"
     )
+    POLYMARKET_RELAYER_KEY: Optional[str] = Field(
+        default=None, description="Relayer/CLOB API key exported from Polymarket UI"
+    )
+    POLYMARKET_RELAYER_SECRET: Optional[str] = Field(
+        default=None, description="Relayer/CLOB API secret exported from Polymarket UI"
+    )
+    POLYMARKET_RELAYER_PASSPHRASE: Optional[str] = Field(
+        default=None, description="Relayer/CLOB API passphrase exported from Polymarket UI"
+    )
     POLYMARKET_SIGNATURE_TYPE: int = Field(
         default=3,
         description=(
@@ -268,6 +277,24 @@ class PolymarketConfig(BaseSettings):
             return None
         return normalized.rstrip("/")
 
+    @field_validator(
+        "POLYMARKET_API_KEY",
+        "POLYMARKET_API_SECRET",
+        "POLYMARKET_PASSPHRASE",
+        "POLYMARKET_API_KEY_NAME",
+        "POLYMARKET_RELAYER_KEY",
+        "POLYMARKET_RELAYER_SECRET",
+        "POLYMARKET_RELAYER_PASSPHRASE",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_credential(cls, v: Optional[str]) -> Optional[str]:
+        """Treat empty credential strings as missing."""
+        if v is None:
+            return None
+        normalized = str(v).strip()
+        return normalized or None
+
     @field_validator("POLYMARKET_SIGNATURE_TYPE")
     @classmethod
     def validate_signature_type(cls, v: int) -> int:
@@ -352,9 +379,13 @@ class PolymarketConfig(BaseSettings):
         return self
 
     def has_api_credentials(self) -> bool:
-        """Check if L2 API credentials are configured"""
+        """Check if L2 CLOB/relayer credentials are configured."""
         return all(
-            [self.POLYMARKET_API_KEY, self.POLYMARKET_PASSPHRASE, self.POLYMARKET_API_KEY_NAME]
+            [
+                self.effective_api_key,
+                self.effective_api_secret,
+                self.effective_api_passphrase,
+            ]
         )
 
     def to_dict(self) -> dict:
@@ -369,12 +400,38 @@ class PolymarketConfig(BaseSettings):
             data["POLYMARKET_API_SECRET"] = "***HIDDEN***"
         if data.get("POLYMARKET_PASSPHRASE"):
             data["POLYMARKET_PASSPHRASE"] = "***HIDDEN***"
+        if data.get("POLYMARKET_RELAYER_KEY"):
+            data["POLYMARKET_RELAYER_KEY"] = "***HIDDEN***"
+        if data.get("POLYMARKET_RELAYER_SECRET"):
+            data["POLYMARKET_RELAYER_SECRET"] = "***HIDDEN***"
+        if data.get("POLYMARKET_RELAYER_PASSPHRASE"):
+            data["POLYMARKET_RELAYER_PASSPHRASE"] = "***HIDDEN***"
         return data
 
     @property
     def effective_funder(self) -> str:
         """Wallet address that actually funds positions/orders in Polymarket."""
         return (self.POLYMARKET_FUNDER or self.POLYGON_ADDRESS).lower()
+
+    @property
+    def effective_api_key(self) -> Optional[str]:
+        """Resolved CLOB/relayer API key used for authenticated L2 calls."""
+        return self.POLYMARKET_RELAYER_KEY or self.POLYMARKET_API_KEY
+
+    @property
+    def effective_api_secret(self) -> Optional[str]:
+        """Resolved CLOB/relayer API secret used for HMAC signing."""
+        return (
+            self.POLYMARKET_RELAYER_SECRET
+            or self.POLYMARKET_API_SECRET
+            or self.POLYMARKET_RELAYER_PASSPHRASE
+            or self.POLYMARKET_PASSPHRASE
+        )
+
+    @property
+    def effective_api_passphrase(self) -> Optional[str]:
+        """Resolved CLOB/relayer API passphrase."""
+        return self.POLYMARKET_RELAYER_PASSPHRASE or self.POLYMARKET_PASSPHRASE
 
     @property
     def polymarket_ready(self) -> bool:

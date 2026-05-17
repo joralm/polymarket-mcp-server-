@@ -350,7 +350,7 @@ The system connects to two WebSocket endpoints:
 
 - **Market data subscriptions** (prices, orderbook) do NOT require authentication
 - **User subscriptions** (orders, trades) REQUIRE CLOB authentication
-- CLOB auth uses `POLYMARKET_API_KEY` and `POLYMARKET_PASSPHRASE` from config
+- CLOB auth uses resolved CLOB credentials (`POLYMARKET_RELAYER_*` preferred, `POLYMARKET_API_*` legacy aliases)
 - Authentication happens automatically during connection if credentials available
 
 ## Event Flow
@@ -395,8 +395,9 @@ Tests use REAL WebSocket connections (no mocks) to ensure the integration works 
 Required environment variables (same as existing config):
 - `POLYGON_PRIVATE_KEY` - Polygon wallet private key
 - `POLYGON_ADDRESS` - Polygon wallet address
-- `POLYMARKET_API_KEY` - L2 API key (optional, created if missing)
-- `POLYMARKET_PASSPHRASE` - API passphrase (optional, created if missing)
+- `POLYMARKET_RELAYER_KEY` - CLOB login key (optional, created if missing)
+- `POLYMARKET_RELAYER_SECRET` - CLOB login secret (optional, created if missing)
+- `POLYMARKET_RELAYER_PASSPHRASE` - CLOB login passphrase (optional, created if missing)
 
 ## Example Usage
 
@@ -434,7 +435,7 @@ unsubscribe_realtime({
 - Check logs for connection errors
 
 ### Authentication failing
-- Ensure `POLYMARKET_API_KEY` and `POLYMARKET_PASSPHRASE` are set
+- Ensure `POLYMARKET_RELAYER_*` (or `POLYMARKET_API_*`) credentials are set
 - Verify credentials are valid
 - Check CLOB WebSocket authentication response
 

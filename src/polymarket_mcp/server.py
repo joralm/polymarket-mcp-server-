@@ -84,9 +84,9 @@ def _log_docker_login_report() -> None:
         logger.info("  FULL mode (trading enabled): False")
         return
 
-    has_api_key = bool(config.POLYMARKET_API_KEY)
-    has_api_secret = bool(config.POLYMARKET_API_SECRET)
-    has_passphrase = bool(config.POLYMARKET_PASSPHRASE)
+    has_api_key = bool(config.effective_api_key)
+    has_api_secret = bool(config.effective_api_secret)
+    has_passphrase = bool(config.effective_api_passphrase)
     has_l2_triplet = has_api_key and (has_api_secret or has_passphrase)
     full_mode = _has_authenticated_trading_access()
 
@@ -109,8 +109,8 @@ def _log_docker_login_report() -> None:
         logger.info("    2) POLYMARKET_FUNDER is the wallet that holds UI funds/positions")
         logger.info("    3) POLYMARKET_SIGNATURE_TYPE=3")
         logger.info(
-            "    4) L2 API credentials are valid or allow auto-derivation on startup "
-            "(POLYMARKET_API_KEY/POLYMARKET_API_SECRET/POLYMARKET_PASSPHRASE)"
+            "    4) L2 CLOB/relayer credentials are valid or allow auto-derivation on startup "
+            "(POLYMARKET_RELAYER_* preferred, POLYMARKET_API_* supported)"
         )
         logger.info("    5) LOG_LEVEL=DEBUG to inspect auth diagnostics")
 
@@ -663,9 +663,9 @@ async def initialize_server() -> None:
                 private_key=config.POLYGON_PRIVATE_KEY,
                 address=config.POLYGON_ADDRESS,
                 chain_id=config.POLYMARKET_CHAIN_ID,
-                api_key=config.POLYMARKET_API_KEY,
-                api_secret=config.POLYMARKET_API_SECRET or config.POLYMARKET_PASSPHRASE,
-                passphrase=config.POLYMARKET_PASSPHRASE,
+                api_key=config.effective_api_key,
+                api_secret=config.effective_api_secret,
+                passphrase=config.effective_api_passphrase,
                 signature_type=config.POLYMARKET_SIGNATURE_TYPE,
                 funder=config.effective_funder,
                 host=config.CLOB_API_URL,

@@ -406,7 +406,7 @@ async def _subscribe_user_orders(arguments: Dict[str, Any]) -> List[types.TextCo
             type="text",
             text=f"Authentication required: {str(e)}\n\n"
                  f"User order subscriptions require CLOB API credentials.\n"
-                 f"Ensure POLYMARKET_API_KEY and POLYMARKET_PASSPHRASE are configured."
+                 f"Ensure POLYMARKET_RELAYER_* (or POLYMARKET_API_*) credentials are configured."
         )]
     except Exception as e:
         return [types.TextContent(
@@ -455,7 +455,7 @@ async def _subscribe_user_trades(arguments: Dict[str, Any]) -> List[types.TextCo
             type="text",
             text=f"Authentication required: {str(e)}\n\n"
                  f"User trade subscriptions require CLOB API credentials.\n"
-                 f"Ensure POLYMARKET_API_KEY and POLYMARKET_PASSPHRASE are configured."
+                 f"Ensure POLYMARKET_RELAYER_* (or POLYMARKET_API_*) credentials are configured."
         )]
     except Exception as e:
         return [types.TextContent(

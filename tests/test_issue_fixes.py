@@ -508,7 +508,6 @@ class TestCriticalRuntimeFixes:
             POLYMARKET_API_KEY="legacy-key",
             POLYMARKET_API_SECRET=None,
             POLYMARKET_PASSPHRASE="legacy-passphrase",
-            POLYMARKET_API_KEY_NAME="legacy-name",
         )
 
         fake_client = MagicMock()
@@ -1691,7 +1690,6 @@ class TestMarketAnalysisIdentifierCompatibility:
             POLYMARKET_API_KEY="test-key",
             POLYMARKET_API_SECRET="test-secret",
             POLYMARKET_PASSPHRASE="test-passphrase",
-            POLYMARKET_API_KEY_NAME="test-name",
         )
         manager = WebSocketManager(config=config)
         manager.clob_ws = AsyncMock()
@@ -1713,7 +1711,6 @@ class TestMarketAnalysisIdentifierCompatibility:
             POLYMARKET_API_KEY="test-key",
             POLYMARKET_API_SECRET=None,
             POLYMARKET_PASSPHRASE="legacy-secret",
-            POLYMARKET_API_KEY_NAME="test-name",
         )
         manager = WebSocketManager(config=config)
         manager.clob_ws = AsyncMock()
@@ -1725,6 +1722,24 @@ class TestMarketAnalysisIdentifierCompatibility:
         data = json.loads(payload)
         assert data["auth"]["secret"] == "legacy-secret"
         assert data["auth"]["passphrase"] == "legacy-secret"
+
+    def test_config_prefers_relayer_triplet_over_legacy_api_triplet(self):
+        """Relayer credentials from UI should be the primary L2 auth source when set."""
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_API_KEY="legacy-api-key",
+            POLYMARKET_API_SECRET="legacy-api-secret",
+            POLYMARKET_PASSPHRASE="legacy-api-passphrase",
+            POLYMARKET_RELAYER_KEY="relayer-key",
+            POLYMARKET_RELAYER_SECRET="relayer-secret",
+            POLYMARKET_RELAYER_PASSPHRASE="relayer-passphrase",
+        )
+
+        assert config.effective_api_key == "relayer-key"
+        assert config.effective_api_secret == "relayer-secret"
+        assert config.effective_api_passphrase == "relayer-passphrase"
+        assert config.has_api_credentials() is True
 
     @pytest.mark.asyncio
     async def test_closing_soon_sends_closed_false(self):

@@ -36,8 +36,9 @@ kubectl create namespace polymarket
 kubectl create secret generic polymarket-mcp-secrets \
   --from-literal=POLYGON_PRIVATE_KEY=0x1234... \
   --from-literal=POLYGON_ADDRESS=0xABCD... \
-  --from-literal=POLYMARKET_API_KEY=... \
-  --from-literal=POLYMARKET_PASSPHRASE=... \
+  --from-literal=POLYMARKET_RELAYER_KEY=... \
+  --from-literal=POLYMARKET_RELAYER_SECRET=... \
+  --from-literal=POLYMARKET_RELAYER_PASSPHRASE=... \
   -n polymarket
 
 # Or from .env file
