@@ -5,7 +5,6 @@ Tests all 12 trading tools with real API integration.
 Uses small amounts for safety.
 """
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -40,9 +39,9 @@ async def setup():
         private_key=config.POLYGON_PRIVATE_KEY,
         address=config.POLYGON_ADDRESS,
         chain_id=config.POLYMARKET_CHAIN_ID,
-        api_key=config.POLYMARKET_API_KEY,
-        api_secret=config.POLYMARKET_PASSPHRASE,
-        passphrase=config.POLYMARKET_PASSPHRASE,
+        api_key=config.effective_api_key,
+        api_secret=config.effective_api_secret,
+        passphrase=config.effective_api_passphrase,
     )
 
     # Ensure API credentials exist

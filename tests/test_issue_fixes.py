@@ -491,8 +491,8 @@ class TestCriticalRuntimeFixes:
             server_module.config = original_config
 
     @pytest.mark.asyncio
-    async def test_server_uses_passphrase_as_api_secret_fallback(self):
-        """Server initialization should keep legacy passphrase-only auth working."""
+    async def test_server_prefers_relayer_triplet_when_present(self):
+        """Server initialization should prioritize POLYMARKET_RELAYER_* over legacy aliases."""
         import polymarket_mcp.server as server_module
 
         original_config = server_module.config
@@ -506,9 +506,11 @@ class TestCriticalRuntimeFixes:
             POLYGON_PRIVATE_KEY="0" * 64,
             POLYGON_ADDRESS="0x" + "0" * 40,
             POLYMARKET_API_KEY="legacy-key",
-            POLYMARKET_API_SECRET=None,
+            POLYMARKET_API_SECRET="legacy-secret",
             POLYMARKET_PASSPHRASE="legacy-passphrase",
-            POLYMARKET_API_KEY_NAME="legacy-name",
+            POLYMARKET_RELAYER_KEY="relayer-key",
+            POLYMARKET_RELAYER_SECRET="relayer-secret",
+            POLYMARKET_RELAYER_PASSPHRASE="relayer-passphrase",
         )
 
         fake_client = MagicMock()
@@ -537,7 +539,9 @@ class TestCriticalRuntimeFixes:
                 await server_module.initialize_server()
 
             assert mock_create_client.call_count == 1
-            assert mock_create_client.call_args.kwargs["api_secret"] == "legacy-passphrase"
+            assert mock_create_client.call_args.kwargs["api_key"] == "relayer-key"
+            assert mock_create_client.call_args.kwargs["api_secret"] == "relayer-secret"
+            assert mock_create_client.call_args.kwargs["passphrase"] == "relayer-passphrase"
             assert mock_create_client.call_args.kwargs["host"] == fake_config.CLOB_API_URL
         finally:
             server_module.config = original_config
@@ -1691,7 +1695,6 @@ class TestMarketAnalysisIdentifierCompatibility:
             POLYMARKET_API_KEY="test-key",
             POLYMARKET_API_SECRET="test-secret",
             POLYMARKET_PASSPHRASE="test-passphrase",
-            POLYMARKET_API_KEY_NAME="test-name",
         )
         manager = WebSocketManager(config=config)
         manager.clob_ws = AsyncMock()
@@ -1705,16 +1708,17 @@ class TestMarketAnalysisIdentifierCompatibility:
         assert data["auth"]["passphrase"] == "test-passphrase"
 
     @pytest.mark.asyncio
-    async def test_websocket_auth_falls_back_to_passphrase_secret(self):
-        """WebSocket auth should keep working when only the legacy passphrase is configured."""
+    async def test_config_and_websocket_keep_secret_passphrase_separate_when_secret_missing(self):
+        """Config should reject incomplete triplet and websocket payload must not copy passphrase into secret."""
         config = PolymarketConfig(
             POLYGON_PRIVATE_KEY="0" * 64,
             POLYGON_ADDRESS="0x" + "0" * 40,
             POLYMARKET_API_KEY="test-key",
             POLYMARKET_API_SECRET=None,
             POLYMARKET_PASSPHRASE="legacy-secret",
-            POLYMARKET_API_KEY_NAME="test-name",
         )
+        assert config.has_api_credentials() is False
+        assert config.effective_api_secret is None
         manager = WebSocketManager(config=config)
         manager.clob_ws = AsyncMock()
         manager.clob_ws.recv = AsyncMock(return_value='{"type":"authenticated"}')
@@ -1723,8 +1727,53 @@ class TestMarketAnalysisIdentifierCompatibility:
 
         payload = manager.clob_ws.send.await_args.args[0]
         data = json.loads(payload)
-        assert data["auth"]["secret"] == "legacy-secret"
+        assert data["auth"]["secret"] is None
         assert data["auth"]["passphrase"] == "legacy-secret"
+
+    def test_config_prefers_relayer_triplet_over_legacy_api_triplet(self):
+        """Relayer credentials from UI should be the primary L2 auth source when set."""
+        config = PolymarketConfig(
+            POLYGON_PRIVATE_KEY="0" * 64,
+            POLYGON_ADDRESS="0x" + "0" * 40,
+            POLYMARKET_API_KEY="legacy-api-key",
+            POLYMARKET_API_SECRET="legacy-api-secret",
+            POLYMARKET_PASSPHRASE="legacy-api-passphrase",
+            POLYMARKET_RELAYER_KEY="relayer-key",
+            POLYMARKET_RELAYER_SECRET="relayer-secret",
+            POLYMARKET_RELAYER_PASSPHRASE="relayer-passphrase",
+        )
+
+        assert config.effective_api_key == "relayer-key"
+        assert config.effective_api_secret == "relayer-secret"
+        assert config.effective_api_passphrase == "relayer-passphrase"
+        assert config.has_api_credentials() is True
+
+    def test_config_requires_all_three_l2_credential_fields(self):
+        """L2 auth should require key, secret, and passphrase."""
+        base_kwargs = {
+            "POLYGON_PRIVATE_KEY": "0" * 64,
+            "POLYGON_ADDRESS": "0x" + "0" * 40,
+        }
+
+        missing_key = PolymarketConfig(
+            **base_kwargs,
+            POLYMARKET_RELAYER_SECRET="s",
+            POLYMARKET_RELAYER_PASSPHRASE="p",
+        )
+        missing_secret = PolymarketConfig(
+            **base_kwargs,
+            POLYMARKET_RELAYER_KEY="k",
+            POLYMARKET_RELAYER_PASSPHRASE="p",
+        )
+        missing_passphrase = PolymarketConfig(
+            **base_kwargs,
+            POLYMARKET_RELAYER_KEY="k",
+            POLYMARKET_RELAYER_SECRET="s",
+        )
+
+        assert missing_key.has_api_credentials() is False
+        assert missing_secret.has_api_credentials() is False
+        assert missing_passphrase.has_api_credentials() is False
 
     @pytest.mark.asyncio
     async def test_closing_soon_sends_closed_false(self):

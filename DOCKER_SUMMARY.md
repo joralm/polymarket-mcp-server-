@@ -246,8 +246,10 @@ git push origin v0.1.0
 - `POLYGON_ADDRESS` - Your wallet address
 
 ### Optional
-- `POLYMARKET_API_KEY` - Auto-generated if empty
-- `POLYMARKET_PASSPHRASE` - Auto-generated if empty
+- `POLYMARKET_RELAYER_KEY` - Auto-generated if empty
+- `POLYMARKET_RELAYER_SECRET` - Auto-generated if empty
+- `POLYMARKET_RELAYER_PASSPHRASE` - Auto-generated if empty
+- `POLYMARKET_API_KEY` / `POLYMARKET_API_SECRET` / `POLYMARKET_PASSPHRASE` - legacy aliases
 - `DEMO_MODE` - Test without real funds
 - `LOG_LEVEL` - DEBUG, INFO, WARNING, ERROR
 - Safety limits (see .env.example)

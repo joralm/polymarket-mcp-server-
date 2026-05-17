@@ -55,6 +55,16 @@ def _log_new_credentials(api_key: str, api_secret: str, passphrase: str, reason:
     # operator so they can persist them in their docker-compose / .env and avoid
     # re-deriving a fresh key on every restart (Polymarket imposes per-wallet limits).
     # Ensure your logging backend (log files, aggregators) has appropriate access controls.
+    logger.info(
+        "  POLYMARKET_RELAYER_KEY=%s", api_key
+    )  # codeql[py/clear-text-logging-sensitive-data]
+    logger.info(
+        "  POLYMARKET_RELAYER_SECRET=%s", api_secret
+    )  # codeql[py/clear-text-logging-sensitive-data]
+    logger.info(
+        "  POLYMARKET_RELAYER_PASSPHRASE=%s", passphrase
+    )  # codeql[py/clear-text-logging-sensitive-data]
+    logger.info("  # Legacy aliases (same values):")
     logger.info("  POLYMARKET_API_KEY=%s", api_key)  # codeql[py/clear-text-logging-sensitive-data]
     logger.info(
         "  POLYMARKET_API_SECRET=%s", api_secret

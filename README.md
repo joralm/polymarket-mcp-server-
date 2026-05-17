@@ -253,10 +253,17 @@ POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock
 **Supported trading flow (important):**
 - Use a wallet created/linked through the Polymarket **deposit-wallet flow** (MetaMask-linked).
 - Social-login-only accounts are not supported for order placement.
-- `RELAYER_API_KEY` and `RELAYER_API_KEY_ADDRESS` are not used by this server.
 
-**L2 API keys (`POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_PASSPHRASE`):**
-- You can create them manually in Polymarket UI (`Settings → API`) when available.
+**L2 CLOB login credentials (relayer/API triplet):**
+- Preferred variable names:
+  - `POLYMARKET_RELAYER_KEY`
+  - `POLYMARKET_RELAYER_SECRET`
+  - `POLYMARKET_RELAYER_PASSPHRASE`
+- Legacy aliases still supported:
+  - `POLYMARKET_API_KEY`
+  - `POLYMARKET_API_SECRET`
+  - `POLYMARKET_PASSPHRASE`
+- These values come from Polymarket UI (`Settings → API`) and are used for **L2 authentication** (CLOB login + request signing).
 - If not provided, the server derives them at startup from your wallet and logs the values to persist in `.env`.
 
 **Wallet auth mapping (important for MetaMask / UI balance parity):**
