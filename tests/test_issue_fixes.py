@@ -1572,6 +1572,41 @@ class TestClobClientSignatureType:
         functions.approve.assert_not_called()
         eth.send_raw_transaction.assert_not_called()
 
+    def test_auto_approve_allowances_skips_tx_at_threshold(self):
+        """auto_approve_allowances should skip when allowance matches the threshold exactly."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = 1_000_000 * (10**6)
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.eth = eth
+
+        inner_client = MagicMock()
+        inner_client.w3 = w3
+
+        client.clob_client = MagicMock()
+        client.clob_client.biconomy = None
+        client.clob_client.client = inner_client
+
+        assert client.auto_approve_allowances() is True
+        functions.approve.assert_not_called()
+        eth.send_raw_transaction.assert_not_called()
+
     def test_auto_approve_allowances_submits_tx_when_allowance_is_low(self):
         """auto_approve_allowances should sign and send an approve tx when needed."""
         with patch.object(PolymarketClient, "_initialize_client", return_value=None):

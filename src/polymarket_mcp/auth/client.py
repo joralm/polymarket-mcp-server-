@@ -311,7 +311,7 @@ class PolymarketClient:
                 account_address, spender_address
             ).call()
 
-            if current_allowance > MIN_ALLOWANCE_THRESHOLD:
+            if current_allowance >= MIN_ALLOWANCE_THRESHOLD:
                 logger.info("Allowance is already sufficient (%s). Skipping.", current_allowance)
                 return True
 
