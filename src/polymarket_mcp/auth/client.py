@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _CRED_BANNER = "=" * 70
 DEFAULT_USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
-DEFAULT_CTF_EXCHANGE_ADDRESS = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
+DEFAULT_CTF_EXCHANGE_ADDRESS = "0x4bFb9717ad29EE08a240D9e6e8854045f9B0721c"
 MIN_ALLOWANCE_THRESHOLD = 1_000_000 * (10**6)
 MAX_UINT256 = 2**256 - 1
 
@@ -245,24 +245,20 @@ class PolymarketClient:
 
     def auto_approve_allowances(self) -> bool:
         """
-        Run on startup to ensure the Polymarket exchange contract can spend USDC.
+        Ensure USDC allowance via direct Polygon RPC Web3 access.
         """
         from eth_utils import to_checksum_address
+        from web3 import Web3
 
         try:
-            if not self.clob_client:
-                raise RuntimeError("ClobClient not initialized")
-
-            if hasattr(self.clob_client, "biconomy") and self.clob_client.biconomy:
-                w3 = self.clob_client.biconomy.web3
-            else:
-                nested_client = getattr(self.clob_client, "client", None)
-                w3 = getattr(nested_client, "w3", None)
-
-            if w3 is None:
-                raise RuntimeError("Web3 provider not available on ClobClient")
+            polygon_rpc = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
+            w3 = Web3(Web3.HTTPProvider(polygon_rpc))
+            if not w3.is_connected():
+                logger.error("Could not connect to Polygon RPC: %s", polygon_rpc)
+                return False
 
             account_address = to_checksum_address(self.address)
+            private_key = self.private_key
 
             usdc_address = to_checksum_address(
                 os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS
@@ -323,15 +319,13 @@ class PolymarketClient:
                     "from": account_address,
                     "nonce": nonce,
                     "gasPrice": w3.eth.gas_price,
-                    "chainId": self.chain_id,
+                    "chainId": 137,
                 }
             )
             if "gas" not in tx:
                 tx["gas"] = approve_call.estimate_gas({"from": account_address})
 
-            signed_tx = w3.eth.account.sign_transaction(
-                tx, private_key=self.private_key
-            )
+            signed_tx = w3.eth.account.sign_transaction(tx, private_key=private_key)
             # eth-account>=0.13 exposes `raw_transaction`, while older web3/eth-account
             # stacks may still expose `rawTransaction`; support both.
             raw_transaction = getattr(signed_tx, "raw_transaction", None)

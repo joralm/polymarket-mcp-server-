@@ -1559,16 +1559,13 @@ class TestClobClientSignatureType:
         eth.contract.return_value = usdc_contract
 
         w3 = MagicMock()
+        w3.is_connected.return_value = True
         w3.eth = eth
 
-        inner_client = MagicMock()
-        inner_client.w3 = w3
-
-        client.clob_client = MagicMock()
-        client.clob_client.biconomy = None
-        client.clob_client.client = inner_client
-
-        assert client.auto_approve_allowances() is True
+        with patch("web3.Web3") as web3_cls:
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
         functions.approve.assert_not_called()
         eth.send_raw_transaction.assert_not_called()
 
@@ -1594,16 +1591,13 @@ class TestClobClientSignatureType:
         eth.contract.return_value = usdc_contract
 
         w3 = MagicMock()
+        w3.is_connected.return_value = True
         w3.eth = eth
 
-        inner_client = MagicMock()
-        inner_client.w3 = w3
-
-        client.clob_client = MagicMock()
-        client.clob_client.biconomy = None
-        client.clob_client.client = inner_client
-
-        assert client.auto_approve_allowances() is True
+        with patch("web3.Web3") as web3_cls:
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
         functions.approve.assert_not_called()
         eth.send_raw_transaction.assert_not_called()
 
@@ -1649,16 +1643,13 @@ class TestClobClientSignatureType:
         eth.send_raw_transaction.return_value = tx_hash
 
         w3 = MagicMock()
+        w3.is_connected.return_value = True
         w3.eth = eth
 
-        inner_client = MagicMock()
-        inner_client.w3 = w3
-
-        client.clob_client = MagicMock()
-        client.clob_client.biconomy = None
-        client.clob_client.client = inner_client
-
-        assert client.auto_approve_allowances() is True
+        with patch("web3.Web3") as web3_cls:
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
         functions.approve.assert_called_once()
         approve_call.build_transaction.assert_called_once()
         eth.account.sign_transaction.assert_called_once()
