@@ -1765,17 +1765,6 @@ class TestClobClientSignatureType:
         def fake_clob_init(self_inner, **kwargs):
             self_inner.host = kwargs.get("host", "")
             self_inner.chain_id = kwargs.get("chain_id", 137)
-            self_inner.signer = None
-            self_inner.creds = None
-            self_inner.mode = 0
-            self_inner.builder = MagicMock()
-            self_inner.use_server_time = False
-            self_inner.retry_on_error = False
-            self_inner.builder_config = None
-            self_inner.fee_slippage = 0
-            self_inner._ClobClient__tick_sizes = {}
-            self_inner._ClobClient__neg_risk = {}
-            self_inner._ClobClient__fee_rates = {}
             self_inner.client = MagicMock()
             self_inner.client.w3 = MagicMock()
             self_inner.client.w3.middleware_onion = MagicMock()
@@ -1784,7 +1773,7 @@ class TestClobClientSignatureType:
             client = PolymarketClient(
                 private_key="0" * 64,
                 address="0x" + "a" * 40,
-                signature_type=2,
+                signature_type=3,
             )
 
         client.clob_client.client.w3.middleware_onion.inject.assert_called_once()
