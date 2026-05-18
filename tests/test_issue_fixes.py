@@ -2736,7 +2736,7 @@ class TestEnsureValidApiCredentials:
         return client
 
     def test_signature_type_3_uses_configured_api_credentials(self):
-        with patch("polymarket_mcp.auth.client.ClobClient"):
+        with patch("polymarket_mcp.auth.client.ClobClient") as mock_clob:
             client = PolymarketClient(
                 private_key=self._DUMMY_PRIVATE_KEY,
                 address=self._DUMMY_ADDRESS,
@@ -2749,6 +2749,7 @@ class TestEnsureValidApiCredentials:
         assert client.api_creds is not None
         assert client.api_creds.api_key == "legacy-key"
         assert client._allow_credential_derivation is False
+        assert mock_clob.call_args.kwargs["creds"].api_key == "legacy-key"
 
     @pytest.mark.asyncio
     async def test_derived_mode_bootstrap_calls_create_api_credentials(self):
@@ -2897,8 +2898,10 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYGON_RPC_URL = ""
         mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_FUNDER = mock_config.effective_funder
         # Non-type-3 flow should still perform startup credential verification.
         mock_config.POLYMARKET_SIGNATURE_TYPE = 2
         mock_config.WS_ENABLED = False
@@ -2950,8 +2953,10 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
+        mock_config.POLYGON_RPC_URL = ""
         mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
+        mock_config.POLYMARKET_FUNDER = mock_config.effective_funder
         mock_config.POLYMARKET_SIGNATURE_TYPE = 3
         mock_config.WS_ENABLED = False
         mock_config.LOG_LEVEL = "INFO"

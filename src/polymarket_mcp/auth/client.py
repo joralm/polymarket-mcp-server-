@@ -335,7 +335,7 @@ class PolymarketClient:
                 )
             return None
         except Exception as exc:
-            logger.warning("Gamma API profile lookup failed: %s", exc)
+            logger.warning("Gamma API profile lookup failed (%s): %s", type(exc).__name__, exc)
             return None
 
     @staticmethod
