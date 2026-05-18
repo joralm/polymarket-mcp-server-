@@ -573,10 +573,7 @@ class TestWalletConfigFlow:
     def test_config_rejects_unsupported_signature_type(self):
         with pytest.raises(
             ValueError,
-            match=(
-                r"must be 0 \(EOA direct mode\), "
-                r"2 \(POLY_PROXY/proxy wallet\), or 3"
-            ),
+            match=r"must be 0 \(EOA direct mode\), 2 \(POLY_PROXY/proxy wallet\), or 3",
         ):
             PolymarketConfig(
                 POLYGON_PRIVATE_KEY="0" * 64,
@@ -1690,6 +1687,96 @@ class TestClobClientSignatureType:
             assert client.auto_approve_allowances() is True
 
         web3_cls.HTTPProvider.assert_called_once_with("https://polygon.llamarpc.com")
+
+    def test_auto_approve_allowances_uses_config_rpc_before_env(self):
+        """Config polygon_rpc_url must override POLYGON_RPC_URL environment variable."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        client.config = MagicMock()
+        client.config.polygon_rpc_url = "https://config-rpc.example"
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.is_connected.return_value = True
+        w3.eth = eth
+
+        with (
+            patch.dict(os.environ, {"POLYGON_RPC_URL": "https://env-rpc.example"}, clear=False),
+            patch("web3.Web3") as web3_cls,
+        ):
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
+
+        web3_cls.HTTPProvider.assert_called_once_with("https://config-rpc.example")
+
+    def test_auto_approve_allowances_injects_poa_middleware_on_direct_web3(self):
+        """Direct RPC Web3 client should receive POA middleware injection."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.is_connected.return_value = True
+        w3.eth = eth
+        w3.middleware_onion = MagicMock()
+
+        with patch("web3.Web3") as web3_cls:
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
+
+        w3.middleware_onion.inject.assert_called_once()
+
+    def test_initialize_client_injects_poa_middleware_into_internal_clob_web3(self):
+        """SDK-internal Web3 should receive middleware injection after ClobClient init."""
+
+        def fake_clob_init(self_inner, **kwargs):
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.client = MagicMock()
+            self_inner.client.w3 = MagicMock()
+            self_inner.client.w3.middleware_onion = MagicMock()
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                signature_type=3,
+            )
+
+        client.clob_client.client.w3.middleware_onion.inject.assert_called_once()
 
     def test_auto_approve_allowances_keeps_custom_rpc_url(self):
         """Should keep configured custom RPC URL when it is not polygon-rpc.com."""
@@ -2879,7 +2966,8 @@ class TestEnsureValidApiCredentials:
                     "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
                 ) as mock_geoblock,
                 patch(
-                    "polymarket_mcp.server.create_polymarket_client", return_value=mock_client
+                    "polymarket_mcp.server.create_polymarket_client",
+                    return_value=mock_client,
                 ),
                 patch("polymarket_mcp.server.create_safety_limits_from_config"),
                 patch("polymarket_mcp.server.get_rate_limiter"),

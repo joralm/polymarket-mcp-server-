@@ -185,9 +185,7 @@ class PolymarketClient:
         self._initialize_client()
         if self.signature_type == 2 and self.client is not None:
             try:
-                logger.info(
-                    "Smart Proxy mode (type 2) active. Verifying allowances on-chain..."
-                )
+                logger.info("Smart Proxy mode (type 2) active. Verifying allowances on-chain...")
                 self.auto_approve_allowances()
             except Exception as e:
                 logger.error(f"Error while running startup auto-approve: {e}")
@@ -237,12 +235,60 @@ class PolymarketClient:
             # Create client
             self.client = ClobClient(**client_args)
             self.clob_client = self.client
+            self._inject_clob_web3_poa_middleware()
 
             logger.info("ClobClient initialized successfully")
 
         except Exception as e:
             logger.error(f"Failed to initialize ClobClient: {e}")
             raise
+
+    @staticmethod
+    def _inject_polygon_poa_middleware(w3: Any, context: str) -> None:
+        """Inject Polygon/Geth POA middleware when a Web3 client is available.
+
+        Args:
+            w3: Web3-compatible client instance whose middleware stack will be patched.
+            context: Human-readable label used in log messages for this injection attempt.
+        """
+        if w3 is None or not hasattr(w3, "middleware_onion"):
+            return
+        try:
+            # web3.py v6 exposes `geth_poa_middleware` in `web3.middleware`;
+            # newer stacks may expose POA compatibility via proof_of_authority.
+            from web3.middleware import geth_poa_middleware
+        except ImportError:
+            try:
+                from web3.middleware.proof_of_authority import (
+                    ExtraDataToPOAMiddleware as geth_poa_middleware,
+                )
+            except ImportError:
+                logger.warning(
+                    "Could not import geth_poa_middleware for %s. "
+                    "This may cause RPC failures on Polygon networks.",
+                    context,
+                )
+                return
+        try:
+            w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        except Exception as exc:
+            logger.debug("POA middleware injection failed for %s: %s", context, exc)
+
+    def _inject_clob_web3_poa_middleware(self) -> None:
+        """Inject POA middleware into SDK-internal Web3 clients when exposed.
+
+        The Polymarket SDK may expose its Web3 instance either at `clob_client.client.w3`
+        or directly at `clob_client.w3`; this helper checks both paths and delegates the
+        actual injection to `_inject_polygon_poa_middleware`.
+        """
+        if self.clob_client is None:
+            return
+        if hasattr(self.clob_client, "client") and hasattr(self.clob_client.client, "w3"):
+            self._inject_polygon_poa_middleware(
+                self.clob_client.client.w3, "ClobClient internal client.w3"
+            )
+        elif hasattr(self.clob_client, "w3"):
+            self._inject_polygon_poa_middleware(self.clob_client.w3, "ClobClient w3")
 
     def auto_approve_allowances(self) -> bool:
         """
@@ -257,17 +303,16 @@ class PolymarketClient:
                 getattr(config_obj, "polygon_rpc_url", None) if config_obj is not None else None
             )
             polygon_rpc = (
-                config_polygon_rpc
-                or os.getenv("POLYGON_RPC_URL")
-                or "https://polygon-rpc.com"
+                config_polygon_rpc or os.getenv("POLYGON_RPC_URL") or "https://polygon.llamarpc.com"
             )
             polygon_rpc = str(polygon_rpc).strip()
             if not polygon_rpc:
-                polygon_rpc = "https://polygon-rpc.com"
+                polygon_rpc = "https://polygon.llamarpc.com"
             polygon_rpc_host = (urlparse(polygon_rpc).hostname or "").lower()
             if polygon_rpc_host == "polygon-rpc.com":
                 polygon_rpc = "https://polygon.llamarpc.com"
             w3 = Web3(Web3.HTTPProvider(polygon_rpc))
+            self._inject_polygon_poa_middleware(w3, "auto_approve_allowances direct RPC")
             if not w3.is_connected():
                 logger.error(
                     "Could not connect to Polygon RPC: %s. Check POLYGON_RPC_URL and network connectivity.",
@@ -286,9 +331,7 @@ class PolymarketClient:
                 )
                 return False
 
-            usdc_address = to_checksum_address(
-                os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS
-            )
+            usdc_address = to_checksum_address(os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS)
             spender_address = to_checksum_address(
                 os.getenv("CTF_EXCHANGE_ADDRESS") or DEFAULT_CTF_EXCHANGE_ADDRESS
             )
