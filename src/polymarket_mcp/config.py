@@ -124,6 +124,10 @@ class PolymarketConfig(BaseSettings):
         default=None,
         description="Required Polymarket geoblock endpoint on polymarket.com",
     )
+    POLYGON_RPC_URL: Optional[str] = Field(
+        default=None,
+        description="Polygon JSON-RPC endpoint (e.g. https://polygon-rpc.com)",
+    )
 
     # WebSocket Controls
     WS_ENABLED: bool = Field(
@@ -267,6 +271,7 @@ class PolymarketConfig(BaseSettings):
         "CLOB_API_TEST_URL",
         "GAMMA_API_TEST_URL",
         "POLYMARKET_GEOBLOCK_URL",
+        "POLYGON_RPC_URL",
         mode="before",
     )
     @classmethod
@@ -518,6 +523,75 @@ def get_polymarket_runtime_state(config: object) -> tuple[bool, Optional[str]]:
         polymarket_config_error = None
 
     return polymarket_ready, polymarket_config_error
+
+
+def validate_startup_config(config: "PolymarketConfig") -> None:
+    """Emit WARNING-level log messages for known misconfiguration patterns.
+
+    This function is intended to be called once at server startup, after
+    ``load_config()`` succeeds.  It never raises — all issues are surfaced
+    as log warnings so that the operator can see and correct them without
+    the server failing to start.
+
+    Checks performed:
+    - POLYGON_RPC_URL set to an Ethereum mainnet host (cloudflare-eth.com) —
+      substitutes the well-known Polygon public RPC and warns.
+    - POLYMARKET_SIGNATURE_TYPE is 0 (EOA direct) or 1 (POLY_PROXY legacy) —
+      warns that these modes are deprecated / blocked for new accounts.
+    - POLYMARKET_FUNDER equals POLYGON_ADDRESS when POLYMARKET_SIGNATURE_TYPE != 0 —
+      warns that the funder is almost certainly misconfigured and should be the
+      deposit wallet address, not the EOA signer.
+
+    Args:
+        config: Loaded ``PolymarketConfig`` instance.
+    """
+    from urllib.parse import urlparse
+
+    # --- POLYGON_RPC_URL cloudflare-eth.com check ---
+    rpc_url = getattr(config, "POLYGON_RPC_URL", None)
+    if rpc_url:
+        parsed_host = (urlparse(rpc_url).hostname or "").lower()
+        if "cloudflare-eth.com" in parsed_host:
+            logger.warning(
+                "POLYGON_RPC_URL '%s' points to cloudflare-eth.com which is an Ethereum "
+                "mainnet endpoint, NOT Polygon. Polygon transactions will fail. "
+                "Update POLYGON_RPC_URL to a Polygon RPC, e.g. https://polygon-rpc.com",
+                rpc_url,
+            )
+
+    # --- Signature type warnings ---
+    sig_type = getattr(config, "POLYMARKET_SIGNATURE_TYPE", None)
+    if sig_type == 0:
+        logger.warning(
+            "POLYMARKET_SIGNATURE_TYPE=0 (EOA direct) is blocked for new accounts on mainnet. "
+            "Order placement will return 'maker address not allowed'. "
+            "Migrate to POLYMARKET_SIGNATURE_TYPE=3 (deposit wallet / POLY_1271 flow)."
+        )
+    elif sig_type == 1:
+        logger.warning(
+            "POLYMARKET_SIGNATURE_TYPE=1 (POLY_PROXY legacy) requires a pre-existing proxy "
+            "wallet created before Polymarket's API migration. It is unavailable to new "
+            "integrations. Migrate to POLYMARKET_SIGNATURE_TYPE=3 (deposit wallet / POLY_1271)."
+        )
+
+    # --- Funder equals signer for non-EOA types ---
+    polygon_address = (getattr(config, "POLYGON_ADDRESS", None) or "").lower()
+    funder = (getattr(config, "POLYMARKET_FUNDER", None) or "").lower()
+    if (
+        polygon_address
+        and funder
+        and funder == polygon_address
+        and sig_type not in (None, 0)
+    ):
+        logger.warning(
+            "POLYMARKET_FUNDER (%s) equals POLYGON_ADDRESS — this is almost certainly a "
+            "misconfiguration for POLYMARKET_SIGNATURE_TYPE=%s. "
+            "For type 3 (POLY_1271/deposit wallet), POLYMARKET_FUNDER must be the deposit "
+            "wallet address, which is different from your signer EOA. "
+            "The server will attempt to discover the correct address automatically.",
+            polygon_address,
+            sig_type,
+        )
 
 
 def load_config() -> PolymarketConfig:

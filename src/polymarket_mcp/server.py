@@ -21,7 +21,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route, Router
 import uvicorn
 
-from .config import load_config, PolymarketConfig, get_polymarket_runtime_state
+from .config import load_config, PolymarketConfig, get_polymarket_runtime_state, validate_startup_config
 from .auth import PolymarketClient, create_polymarket_client
 from .utils import (
     get_rate_limiter,
@@ -626,6 +626,10 @@ async def initialize_server() -> None:
 
         demo_mode = getattr(config, "DEMO_MODE", False) is True
         polymarket_ready, polymarket_config_error = get_polymarket_runtime_state(config)
+
+        # Emit startup configuration warnings for known misconfigurations.
+        if not demo_mode:
+            validate_startup_config(config)
 
         market_discovery.set_gamma_api_url(config.GAMMA_API_URL)
         market_analysis.set_api_urls(config.GAMMA_API_URL, config.CLOB_API_URL)

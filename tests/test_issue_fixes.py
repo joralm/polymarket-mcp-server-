@@ -3741,3 +3741,315 @@ class TestConfiguredHostFailures:
         assert len(requested_urls) == 1
 
         market_analysis.set_api_urls(original_gamma_url, original_clob_url)
+
+
+# ---------------------------------------------------------------------------
+# Deposit wallet auto-discovery (type 3 startup flow)
+# ---------------------------------------------------------------------------
+
+
+class TestDepositWalletDiscovery:
+    """Tests for automatic deposit wallet (POLYMARKET_FUNDER) discovery at startup."""
+
+    SIGNER_ADDRESS = "0x" + "a" * 40
+    DEPOSIT_WALLET = "0x" + "b" * 40
+    PRIVATE_KEY = "0" * 64
+
+    def _make_fake_clob_init(self, captured_args=None, signer_obj=None):
+        """Return a fake ClobClient.__init__ that stores kwargs and exposes stub internals."""
+
+        def fake_clob_init(self_inner, **kwargs):
+            if captured_args is not None:
+                captured_args.update(kwargs)
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = signer_obj
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+
+        return fake_clob_init
+
+    def test_discover_deposit_wallet_returns_proxy_wallet(self):
+        """_discover_deposit_wallet extracts proxyWallet from /profile response."""
+        mock_signer = MagicMock()
+        profile_response = {"proxyWallet": self.DEPOSIT_WALLET, "address": self.SIGNER_ADDRESS}
+
+        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(ClobClient, "_l1_headers", return_value={"auth": "token"}):
+                with patch.object(ClobClient, "_get", return_value=profile_response):
+                    result = PolymarketClient._discover_deposit_wallet(
+                        "https://clob.polymarket.com", 137, self.PRIVATE_KEY
+                    )
+
+        assert result == self.DEPOSIT_WALLET
+
+    def test_discover_deposit_wallet_handles_proxy_wallet_key(self):
+        """_discover_deposit_wallet also handles snake_case proxy_wallet key."""
+        mock_signer = MagicMock()
+        profile_response = {"proxy_wallet": self.DEPOSIT_WALLET}
+
+        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(ClobClient, "_l1_headers", return_value={}):
+                with patch.object(ClobClient, "_get", return_value=profile_response):
+                    result = PolymarketClient._discover_deposit_wallet(
+                        "https://clob.polymarket.com", 137, self.PRIVATE_KEY
+                    )
+
+        assert result == self.DEPOSIT_WALLET
+
+    def test_discover_deposit_wallet_raises_on_network_error(self):
+        """_discover_deposit_wallet raises RuntimeError when the API call fails."""
+        mock_signer = MagicMock()
+
+        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(ClobClient, "_l1_headers", return_value={}):
+                with patch.object(
+                    ClobClient, "_get", side_effect=ConnectionError("network error")
+                ):
+                    with pytest.raises(RuntimeError, match="Failed to discover deposit wallet"):
+                        PolymarketClient._discover_deposit_wallet(
+                            "https://clob.polymarket.com", 137, self.PRIVATE_KEY
+                        )
+
+    def test_discover_deposit_wallet_returns_none_when_no_wallet_field(self):
+        """_discover_deposit_wallet returns None when /profile has no wallet field."""
+        mock_signer = MagicMock()
+        profile_response = {"address": self.SIGNER_ADDRESS, "email": "user@example.com"}
+
+        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(ClobClient, "_l1_headers", return_value={}):
+                with patch.object(ClobClient, "_get", return_value=profile_response):
+                    result = PolymarketClient._discover_deposit_wallet(
+                        "https://clob.polymarket.com", 137, self.PRIVATE_KEY
+                    )
+
+        assert result is None
+
+    def test_startup_uses_discovered_wallet_when_funder_equals_signer(self):
+        """When funder==signer on type-3, __init__ discovers and uses the deposit wallet."""
+        captured_args = {}
+        mock_signer = MagicMock()
+        profile_response = {"proxyWallet": self.DEPOSIT_WALLET}
+
+        fake_init = self._make_fake_clob_init(captured_args, signer_obj=mock_signer)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(ClobClient, "_l1_headers", return_value={}):
+                with patch.object(ClobClient, "_get", return_value=profile_response):
+                    with patch.object(ClobClient, "update_balance_allowance"):
+                        client = PolymarketClient(
+                            private_key=self.PRIVATE_KEY,
+                            address=self.SIGNER_ADDRESS,
+                            signature_type=3,
+                        )
+
+        assert client.funder_address == self.DEPOSIT_WALLET.lower()
+        assert captured_args.get("funder") == self.DEPOSIT_WALLET.lower()
+
+    def test_startup_skips_discovery_when_funder_is_different_from_signer(self):
+        """When POLYMARKET_FUNDER is explicitly set and != signer, discovery is skipped."""
+        captured_args = {}
+        mock_signer = MagicMock()
+
+        fake_init = self._make_fake_clob_init(captured_args, signer_obj=mock_signer)
+        discover_mock = MagicMock(return_value=self.DEPOSIT_WALLET)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(PolymarketClient, "_discover_deposit_wallet", discover_mock):
+                with patch.object(ClobClient, "update_balance_allowance"):
+                    client = PolymarketClient(
+                        private_key=self.PRIVATE_KEY,
+                        address=self.SIGNER_ADDRESS,
+                        funder="0x" + "c" * 40,
+                        signature_type=3,
+                    )
+
+        discover_mock.assert_not_called()
+        assert client.funder_address == "0x" + "c" * 40
+
+    def test_startup_continues_with_signer_when_discovery_fails(self):
+        """When discovery raises RuntimeError, startup logs error and uses signer as funder."""
+
+        def fake_initialize(self_inner):
+            self_inner.client = MagicMock()
+            self_inner.clob_client = self_inner.client
+
+        with patch.object(PolymarketClient, "_initialize_client", fake_initialize):
+            with patch.object(
+                PolymarketClient,
+                "_discover_deposit_wallet",
+                side_effect=RuntimeError("API unreachable"),
+            ):
+                client = PolymarketClient(
+                    private_key=self.PRIVATE_KEY,
+                    address=self.SIGNER_ADDRESS,
+                    signature_type=3,
+                )
+
+        assert client.funder_address == self.SIGNER_ADDRESS.lower()
+
+    def test_startup_logs_discovery_banner(self):
+        """The discovery banner is emitted at WARNING level when a wallet is discovered."""
+        mock_signer = MagicMock()
+        profile_response = {"proxyWallet": self.DEPOSIT_WALLET}
+
+        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
+        with patch.object(ClobClient, "__init__", fake_init):
+            with patch.object(ClobClient, "_l1_headers", return_value={}):
+                with patch.object(ClobClient, "_get", return_value=profile_response):
+                    with patch.object(ClobClient, "update_balance_allowance"):
+                        with patch.object(
+                            PolymarketClient,
+                            "_log_deposit_wallet_discovery_banner",
+                        ) as banner_mock:
+                            PolymarketClient(
+                                private_key=self.PRIVATE_KEY,
+                                address=self.SIGNER_ADDRESS,
+                                signature_type=3,
+                            )
+
+        banner_mock.assert_called_once_with(self.DEPOSIT_WALLET)
+
+    def test_type3_update_balance_allowance_called_on_init(self):
+        """For signature_type=3, update_balance_allowance is called at startup."""
+
+        def fake_initialize(self_inner):
+            self_inner.client = MagicMock()
+            self_inner.clob_client = self_inner.client
+
+        with patch.object(PolymarketClient, "_initialize_client", fake_initialize):
+            with patch.object(
+                PolymarketClient, "_discover_deposit_wallet", return_value=self.DEPOSIT_WALLET
+            ):
+                with patch.object(
+                    PolymarketClient, "_log_deposit_wallet_discovery_banner"
+                ):
+                    client = PolymarketClient(
+                        private_key=self.PRIVATE_KEY,
+                        address=self.SIGNER_ADDRESS,
+                        signature_type=3,
+                    )
+
+        client.client.update_balance_allowance.assert_called_once()
+        call_args = client.client.update_balance_allowance.call_args[0][0]
+        assert call_args.signature_type == 3
+
+
+# ---------------------------------------------------------------------------
+# validate_startup_config warnings
+# ---------------------------------------------------------------------------
+
+
+class TestValidateStartupConfig:
+    """Tests for the validate_startup_config() startup warning function."""
+
+    def _make_config(self, **overrides):
+        """Return a minimal object that looks like PolymarketConfig for validate_startup_config."""
+        from types import SimpleNamespace
+
+        defaults = {
+            "POLYGON_RPC_URL": None,
+            "POLYMARKET_SIGNATURE_TYPE": 3,
+            "POLYGON_ADDRESS": "0x" + "a" * 40,
+            "POLYMARKET_FUNDER": "0x" + "b" * 40,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_warns_for_cloudflare_eth_rpc_url(self):
+        from polymarket_mcp.config import validate_startup_config
+
+        cfg = self._make_config(POLYGON_RPC_URL="https://cloudflare-eth.com/v1/mainnet")
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        messages = " ".join(call.args[0] for call in warn.call_args_list)
+        assert "cloudflare-eth.com" in messages
+
+    def test_no_warning_for_polygon_rpc(self):
+        from polymarket_mcp.config import validate_startup_config
+
+        cfg = self._make_config(POLYGON_RPC_URL="https://polygon-rpc.com")
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        messages = " ".join(call.args[0] for call in warn.call_args_list)
+        assert "cloudflare-eth.com" not in messages
+
+    def test_warns_for_signature_type_0(self):
+        from polymarket_mcp.config import validate_startup_config
+
+        cfg = self._make_config(POLYMARKET_SIGNATURE_TYPE=0)
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        messages = " ".join(call.args[0] for call in warn.call_args_list)
+        assert "POLYMARKET_SIGNATURE_TYPE=0" in messages or "signature_type=0" in messages.lower() or "type 0" in messages.lower() or "EOA" in messages
+
+    def test_warns_for_signature_type_1(self):
+        from polymarket_mcp.config import validate_startup_config
+
+        cfg = self._make_config(POLYMARKET_SIGNATURE_TYPE=1)
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        messages = " ".join(call.args[0] for call in warn.call_args_list)
+        assert "POLYMARKET_SIGNATURE_TYPE=1" in messages or "POLY_PROXY" in messages
+
+    def test_warns_when_funder_equals_signer_for_type3(self):
+        from polymarket_mcp.config import validate_startup_config
+
+        addr = "0x" + "a" * 40
+        cfg = self._make_config(
+            POLYMARKET_SIGNATURE_TYPE=3,
+            POLYGON_ADDRESS=addr,
+            POLYMARKET_FUNDER=addr,
+        )
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        messages = " ".join(call.args[0] for call in warn.call_args_list)
+        assert "POLYMARKET_FUNDER" in messages
+
+    def test_no_warning_when_funder_equals_signer_for_type0(self):
+        """For EOA mode (type 0), funder == signer is correct, no warning expected."""
+        from polymarket_mcp.config import validate_startup_config
+
+        addr = "0x" + "a" * 40
+        cfg = self._make_config(
+            POLYMARKET_SIGNATURE_TYPE=0,
+            POLYGON_ADDRESS=addr,
+            POLYMARKET_FUNDER=addr,
+        )
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        # Only EOA type-0 warning expected, not funder-mismatch warning
+        funder_msgs = [
+            call.args[0]
+            for call in warn.call_args_list
+            if "POLYMARKET_FUNDER" in call.args[0]
+        ]
+        assert not funder_msgs, f"Unexpected funder warning for type 0: {funder_msgs}"
+
+    def test_no_warning_when_funder_differs_from_signer(self):
+        """No funder warning when POLYMARKET_FUNDER is properly distinct from EOA."""
+        from polymarket_mcp.config import validate_startup_config
+
+        cfg = self._make_config(
+            POLYMARKET_SIGNATURE_TYPE=3,
+            POLYGON_ADDRESS="0x" + "a" * 40,
+            POLYMARKET_FUNDER="0x" + "b" * 40,
+        )
+        with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
+            validate_startup_config(cfg)
+        funder_msgs = [
+            call.args[0]
+            for call in warn.call_args_list
+            if "POLYMARKET_FUNDER" in call.args[0]
+        ]
+        assert not funder_msgs, f"Unexpected funder warning: {funder_msgs}"
