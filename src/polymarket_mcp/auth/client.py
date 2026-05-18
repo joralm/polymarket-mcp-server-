@@ -249,6 +249,8 @@ class PolymarketClient:
         if w3 is None or not hasattr(w3, "middleware_onion"):
             return
         try:
+            # web3.py v6 exposes `geth_poa_middleware` in `web3.middleware`;
+            # newer stacks may expose POA compatibility via proof_of_authority.
             from web3.middleware import geth_poa_middleware
         except ImportError:
             try:
