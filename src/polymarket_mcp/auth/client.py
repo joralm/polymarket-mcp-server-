@@ -251,7 +251,14 @@ class PolymarketClient:
         from web3 import Web3
 
         try:
-            polygon_rpc = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
+            config_polygon_rpc = getattr(getattr(self, "config", None), "polygon_rpc_url", None)
+            polygon_rpc = (
+                config_polygon_rpc
+                or os.getenv("POLYGON_RPC_URL")
+                or "https://polygon-rpc.com"
+            )
+            if "polygon-rpc.com" in polygon_rpc:
+                polygon_rpc = "https://polygon.llamarpc.com"
             w3 = Web3(Web3.HTTPProvider(polygon_rpc))
             if not w3.is_connected():
                 logger.error(
