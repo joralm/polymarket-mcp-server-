@@ -263,12 +263,16 @@ class PolymarketClient:
                     ExtraDataToPOAMiddleware as geth_poa_middleware,
                 )
             except ImportError:
-                logger.warning("Could not import geth_poa_middleware for %s.", context)
+                logger.warning(
+                    "Could not import geth_poa_middleware for %s. "
+                    "This may cause RPC failures on Polygon networks.",
+                    context,
+                )
                 return
         try:
             w3.middleware_onion.inject(geth_poa_middleware, layer=0)
         except Exception as exc:
-            logger.debug("POA middleware inject skipped for %s: %s", context, exc)
+            logger.debug("POA middleware injection failed for %s: %s", context, exc)
 
     def _inject_clob_web3_poa_middleware(self) -> None:
         """Inject POA middleware into SDK-internal Web3 clients when exposed.
