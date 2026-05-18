@@ -1691,6 +1691,107 @@ class TestClobClientSignatureType:
 
         web3_cls.HTTPProvider.assert_called_once_with("https://polygon.llamarpc.com")
 
+    def test_auto_approve_allowances_uses_config_rpc_before_env(self):
+        """Config polygon_rpc_url must override POLYGON_RPC_URL environment variable."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        client.config = MagicMock()
+        client.config.polygon_rpc_url = "https://config-rpc.example"
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.is_connected.return_value = True
+        w3.eth = eth
+
+        with (
+            patch.dict(os.environ, {"POLYGON_RPC_URL": "https://env-rpc.example"}, clear=False),
+            patch("web3.Web3") as web3_cls,
+        ):
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
+
+        web3_cls.HTTPProvider.assert_called_once_with("https://config-rpc.example")
+
+    def test_auto_approve_allowances_injects_poa_middleware_on_direct_web3(self):
+        """Direct RPC Web3 client should receive POA middleware injection."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.is_connected.return_value = True
+        w3.eth = eth
+        w3.middleware_onion = MagicMock()
+
+        with patch("web3.Web3") as web3_cls:
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
+
+        w3.middleware_onion.inject.assert_called_once()
+
+    def test_initialize_client_injects_poa_middleware_into_internal_clob_web3(self):
+        """SDK-internal Web3 should receive middleware injection after ClobClient init."""
+
+        def fake_clob_init(self_inner, **kwargs):
+            self_inner.host = kwargs.get("host", "")
+            self_inner.chain_id = kwargs.get("chain_id", 137)
+            self_inner.signer = None
+            self_inner.creds = None
+            self_inner.mode = 0
+            self_inner.builder = MagicMock()
+            self_inner.use_server_time = False
+            self_inner.retry_on_error = False
+            self_inner.builder_config = None
+            self_inner.fee_slippage = 0
+            self_inner._ClobClient__tick_sizes = {}
+            self_inner._ClobClient__neg_risk = {}
+            self_inner._ClobClient__fee_rates = {}
+            self_inner.client = MagicMock()
+            self_inner.client.w3 = MagicMock()
+            self_inner.client.w3.middleware_onion = MagicMock()
+
+        with patch.object(ClobClient, "__init__", fake_clob_init):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "a" * 40,
+                signature_type=2,
+            )
+
+        client.clob_client.client.w3.middleware_onion.inject.assert_called_once()
+
     def test_auto_approve_allowances_keeps_custom_rpc_url(self):
         """Should keep configured custom RPC URL when it is not polygon-rpc.com."""
         with patch.object(PolymarketClient, "_initialize_client", return_value=None):
