@@ -143,6 +143,28 @@ class PolymarketClient:
                 self.address,
             )
             requested_funder = self.address
+
+        # For type-3 (POLY_1271/deposit wallet), if funder was not explicitly
+        # configured (or was misconfigured to equal the signer EOA), discover
+        # the actual deposit wallet address from the CLOB profile endpoint.
+        if self._is_type3_signature and requested_funder == self.address:
+            try:
+                discovered = self._discover_deposit_wallet(host, chain_id, private_key)
+                if discovered and discovered.lower() != self.address:
+                    self._log_deposit_wallet_discovery_banner(discovered)
+                    requested_funder = discovered.lower()
+                # If discovery returned the EOA or None, keep requested_funder as-is.
+            except RuntimeError as exc:
+                logger.error(
+                    "Could not auto-discover deposit wallet address from CLOB /profile: %s. "
+                    "Server will start with funder=%s (your EOA). "
+                    "Trading on mainnet will fail until POLYMARKET_FUNDER is set correctly. "
+                    "Manually set POLYMARKET_FUNDER=<your deposit wallet address> "
+                    "and POLYMARKET_SIGNATURE_TYPE=3 in your environment.",
+                    exc,
+                    self.address,
+                )
+
         self.funder_address = requested_funder
         self.host = host
 
@@ -189,6 +211,23 @@ class PolymarketClient:
                 self.auto_approve_allowances()
             except Exception as e:
                 logger.error(f"Error while running startup auto-approve: {e}")
+        elif self._is_type3_signature and self.client is not None:
+            try:
+                logger.info(
+                    "Deposit wallet mode (type 3) active. Syncing balance/allowance state..."
+                )
+                self.client.update_balance_allowance(
+                    BalanceAllowanceParams(
+                        asset_type=AssetType.COLLATERAL,
+                        signature_type=self.signature_type,
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    "Startup balance/allowance sync failed (non-fatal): %s. "
+                    "Trading will proceed; Polymarket will re-sync on the first order.",
+                    e,
+                )
 
         logger.info(
             f"PolymarketClient initialized for signer {self.address} "
@@ -289,6 +328,87 @@ class PolymarketClient:
             )
         elif hasattr(self.clob_client, "w3"):
             self._inject_polygon_poa_middleware(self.clob_client.w3, "ClobClient w3")
+
+    @staticmethod
+    def _discover_deposit_wallet(host: str, chain_id: int, private_key: str) -> Optional[str]:
+        """Discover the deposit wallet (proxy wallet) address for a signer key.
+
+        Creates a temporary L1-only CLOB client and calls ``GET /profile`` to
+        retrieve the proxy/deposit wallet address that Polymarket has associated
+        with the supplied private key.
+
+        On success the discovered address is returned.  On any network or API
+        error a ``RuntimeError`` is raised so that the caller can decide how to
+        handle the failure (e.g. abort startup or fall back gracefully).
+
+        Args:
+            host: CLOB API host URL (e.g. ``https://clob.polymarket.com``).
+            chain_id: Polygon chain ID (137 for mainnet).
+            private_key: Signer wallet private key (hex, with or without 0x).
+
+        Returns:
+            The checksummed deposit wallet address string, or ``None`` if the
+            profile response does not contain a recognizable wallet field.
+
+        Raises:
+            RuntimeError: If the CLOB API call fails for any reason.
+        """
+        try:
+            probe_client = ClobClient(host=host, chain_id=chain_id, key=private_key)
+            # Call GET /profile with L1 auth headers using the SDK's internal helpers.
+            l1_headers = probe_client._l1_headers()
+            profile = probe_client._get(f"{host}/profile", headers=l1_headers)
+            if not isinstance(profile, dict):
+                raise RuntimeError(
+                    f"Unexpected /profile response type: {type(profile).__name__}"
+                )
+            # Polymarket returns the proxy/deposit wallet under different keys
+            # depending on the API version.
+            proxy_wallet = (
+                profile.get("proxyWallet")
+                or profile.get("proxy_wallet")
+                or profile.get("depositWallet")
+                or profile.get("deposit_wallet")
+            )
+            if not proxy_wallet:
+                logger.warning(
+                    "CLOB /profile response did not contain a recognizable wallet address field. "
+                    "Known response keys: %s",
+                    sorted(profile.keys()),
+                )
+                return None
+            return str(proxy_wallet)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to discover deposit wallet address from CLOB /profile endpoint: {exc}"
+            ) from exc
+
+    @staticmethod
+    def _log_deposit_wallet_discovery_banner(deposit_wallet: str) -> None:
+        """Log a prominent WARNING banner when the deposit wallet was auto-discovered.
+
+        Operators must see this at startup so they can persist the discovered
+        ``POLYMARKET_FUNDER`` address in their ``docker-compose.yml`` / ``.env``.
+
+        Args:
+            deposit_wallet: The discovered deposit wallet address.
+        """
+        # Banner width: 2 border chars (║) + 2 padding spaces + 64 content chars = 68 total.
+        # The separator line uses 66 inner chars to match the ╔...╗ / ╚...╝ border layout.
+        line = "═" * 66
+        logger.warning("╔%s╗", line)
+        logger.warning("║  POLYMARKET_FUNDER not configured or equals POLYGON_ADDRESS  ║")
+        logger.warning("║  Discovered deposit wallet address from CLOB API:            ║")
+        logger.warning("║  %-64s║", deposit_wallet)
+        logger.warning("║                                                              ║")
+        logger.warning("║  Add this to your docker-compose.yml / .env:                 ║")
+        logger.warning("║  %-64s║", f"POLYMARKET_FUNDER={deposit_wallet}")
+        logger.warning("║  POLYMARKET_SIGNATURE_TYPE=3                                 ║")
+        logger.warning("║                                                              ║")
+        logger.warning("║  Then restart the server.                                    ║")
+        logger.warning("╚%s╝", line)
 
     def auto_approve_allowances(self) -> bool:
         """
@@ -1128,7 +1248,10 @@ class PolymarketClient:
         get_balance_allowance_fn = getattr(self.client, "get_balance_allowance", None)
         if callable(get_balance_allowance_fn):
             logger.debug("Balance fetch path: client.get_balance_allowance")
-            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.COLLATERAL,
+                signature_type=self.signature_type,
+            )
             balance_data = get_balance_allowance_fn(params)
             if isinstance(balance_data, dict):
                 normalized = self._normalize_balance_payload(balance_data)
