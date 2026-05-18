@@ -245,7 +245,12 @@ class PolymarketClient:
 
     @staticmethod
     def _inject_polygon_poa_middleware(w3: Any, context: str) -> None:
-        """Inject Polygon/Geth POA middleware when a Web3 client is available."""
+        """Inject Polygon/Geth POA middleware when a Web3 client is available.
+
+        Args:
+            w3: Web3-compatible client instance whose middleware stack will be patched.
+            context: Human-readable label used in log messages for this injection attempt.
+        """
         if w3 is None or not hasattr(w3, "middleware_onion"):
             return
         try:
@@ -266,7 +271,12 @@ class PolymarketClient:
             logger.debug("POA middleware inject skipped for %s: %s", context, exc)
 
     def _inject_clob_web3_poa_middleware(self) -> None:
-        """Inject POA middleware into SDK-internal Web3 clients when exposed."""
+        """Inject POA middleware into SDK-internal Web3 clients when exposed.
+
+        The Polymarket SDK may expose its Web3 instance either at `clob_client.client.w3`
+        or directly at `clob_client.w3`; this helper checks both paths and delegates the
+        actual injection to `_inject_polygon_poa_middleware`.
+        """
         if self.clob_client is None:
             return
         if hasattr(self.clob_client, "client") and hasattr(self.clob_client.client, "w3"):
