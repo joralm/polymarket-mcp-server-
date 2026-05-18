@@ -3991,7 +3991,7 @@ class TestValidateStartupConfig:
         with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
             validate_startup_config(cfg)
         messages = " ".join(call.args[0] for call in warn.call_args_list)
-        assert "POLYMARKET_SIGNATURE_TYPE=0" in messages or "signature_type=0" in messages.lower() or "type 0" in messages.lower() or "EOA" in messages
+        assert "POLYMARKET_SIGNATURE_TYPE=0" in messages
 
     def test_warns_for_signature_type_1(self):
         from polymarket_mcp.config import validate_startup_config
@@ -4000,7 +4000,7 @@ class TestValidateStartupConfig:
         with patch.object(logging.getLogger("polymarket_mcp.config"), "warning") as warn:
             validate_startup_config(cfg)
         messages = " ".join(call.args[0] for call in warn.call_args_list)
-        assert "POLYMARKET_SIGNATURE_TYPE=1" in messages or "POLY_PROXY" in messages
+        assert "POLYMARKET_SIGNATURE_TYPE=1" in messages
 
     def test_warns_when_funder_equals_signer_for_type3(self):
         from polymarket_mcp.config import validate_startup_config

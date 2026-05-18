@@ -535,7 +535,7 @@ def validate_startup_config(config: "PolymarketConfig") -> None:
 
     Checks performed:
     - POLYGON_RPC_URL set to an Ethereum mainnet host (cloudflare-eth.com) —
-      substitutes the well-known Polygon public RPC and warns.
+      logs a warning; the value is not modified.
     - POLYMARKET_SIGNATURE_TYPE is 0 (EOA direct) or 1 (POLY_PROXY legacy) —
       warns that these modes are deprecated / blocked for new accounts.
     - POLYMARKET_FUNDER equals POLYGON_ADDRESS when POLYMARKET_SIGNATURE_TYPE != 0 —
@@ -551,7 +551,8 @@ def validate_startup_config(config: "PolymarketConfig") -> None:
     rpc_url = getattr(config, "POLYGON_RPC_URL", None)
     if rpc_url:
         parsed_host = (urlparse(rpc_url).hostname or "").lower()
-        if "cloudflare-eth.com" in parsed_host:
+        # Use suffix/equality check to avoid matching e.g. "notcloudflare-eth.com"
+        if parsed_host == "cloudflare-eth.com" or parsed_host.endswith(".cloudflare-eth.com"):
             logger.warning(
                 "POLYGON_RPC_URL '%s' points to cloudflare-eth.com which is an Ethereum "
                 "mainnet endpoint, NOT Polygon. Polygon transactions will fail. "

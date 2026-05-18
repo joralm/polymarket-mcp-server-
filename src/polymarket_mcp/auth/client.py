@@ -395,6 +395,8 @@ class PolymarketClient:
         Args:
             deposit_wallet: The discovered deposit wallet address.
         """
+        # Banner width: 2 border chars (║) + 2 padding spaces + 64 content chars = 68 total.
+        # The separator line uses 66 inner chars to match the ╔...╗ / ╚...╝ border layout.
         line = "═" * 66
         logger.warning("╔%s╗", line)
         logger.warning("║  POLYMARKET_FUNDER not configured or equals POLYGON_ADDRESS  ║")
