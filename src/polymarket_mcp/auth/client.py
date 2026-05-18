@@ -185,9 +185,7 @@ class PolymarketClient:
         self._initialize_client()
         if self.signature_type == 2 and self.client is not None:
             try:
-                logger.info(
-                    "Smart Proxy mode (type 2) active. Verifying allowances on-chain..."
-                )
+                logger.info("Smart Proxy mode (type 2) active. Verifying allowances on-chain...")
                 self.auto_approve_allowances()
             except Exception as e:
                 logger.error(f"Error while running startup auto-approve: {e}")
@@ -289,9 +287,7 @@ class PolymarketClient:
                 getattr(config_obj, "polygon_rpc_url", None) if config_obj is not None else None
             )
             polygon_rpc = (
-                config_polygon_rpc
-                or os.getenv("POLYGON_RPC_URL")
-                or "https://polygon.llamarpc.com"
+                config_polygon_rpc or os.getenv("POLYGON_RPC_URL") or "https://polygon.llamarpc.com"
             )
             polygon_rpc = str(polygon_rpc).strip()
             if not polygon_rpc:
@@ -319,9 +315,7 @@ class PolymarketClient:
                 )
                 return False
 
-            usdc_address = to_checksum_address(
-                os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS
-            )
+            usdc_address = to_checksum_address(os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS)
             spender_address = to_checksum_address(
                 os.getenv("CTF_EXCHANGE_ADDRESS") or DEFAULT_CTF_EXCHANGE_ADDRESS
             )
