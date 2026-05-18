@@ -1727,6 +1727,42 @@ class TestClobClientSignatureType:
 
         web3_cls.HTTPProvider.assert_called_once_with(custom_rpc)
 
+    def test_auto_approve_allowances_does_not_fallback_on_substring_match(self):
+        """Should not fallback when polygon-rpc.com appears outside hostname."""
+        with patch.object(PolymarketClient, "_initialize_client", return_value=None):
+            client = PolymarketClient(
+                private_key="0" * 64,
+                address="0x" + "1" * 40,
+                signature_type=2,
+            )
+
+        allowance_call = MagicMock()
+        allowance_call.call.return_value = MIN_ALLOWANCE_THRESHOLD
+
+        functions = MagicMock()
+        functions.allowance.return_value = allowance_call
+
+        usdc_contract = MagicMock()
+        usdc_contract.functions = functions
+
+        eth = MagicMock()
+        eth.contract.return_value = usdc_contract
+
+        w3 = MagicMock()
+        w3.is_connected.return_value = True
+        w3.eth = eth
+
+        custom_rpc = "https://rpc-proxy.example/polygon-rpc.com"
+        with (
+            patch.dict(os.environ, {"POLYGON_RPC_URL": custom_rpc}, clear=False),
+            patch("web3.Web3") as web3_cls,
+        ):
+            web3_cls.HTTPProvider.return_value = MagicMock()
+            web3_cls.return_value = w3
+            assert client.auto_approve_allowances() is True
+
+        web3_cls.HTTPProvider.assert_called_once_with(custom_rpc)
+
     def test_initialize_client_signature_type_0_forces_eoa_funder(self):
         """EOA direct mode must use signer EOA as funder."""
         captured_args = {}

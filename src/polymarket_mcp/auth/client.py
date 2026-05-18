@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional
 import logging
 import os
 import re
+from urllib.parse import urlparse
 from itertools import chain
 import httpx
 from py_clob_client_v2.client import ClobClient
@@ -251,13 +252,17 @@ class PolymarketClient:
         from web3 import Web3
 
         try:
-            config_polygon_rpc = getattr(getattr(self, "config", None), "polygon_rpc_url", None)
+            config_obj = getattr(self, "config", None)
+            config_polygon_rpc = (
+                getattr(config_obj, "polygon_rpc_url", None) if config_obj is not None else None
+            )
             polygon_rpc = (
                 config_polygon_rpc
                 or os.getenv("POLYGON_RPC_URL")
                 or "https://polygon-rpc.com"
             )
-            if "polygon-rpc.com" in polygon_rpc:
+            polygon_rpc_host = (urlparse(polygon_rpc).hostname or "").lower()
+            if polygon_rpc_host == "polygon-rpc.com":
                 polygon_rpc = "https://polygon.llamarpc.com"
             w3 = Web3(Web3.HTTPProvider(polygon_rpc))
             if not w3.is_connected():
