@@ -573,7 +573,7 @@ class TestWalletConfigFlow:
     def test_config_rejects_unsupported_signature_type(self):
         with pytest.raises(
             ValueError,
-            match=(r"must be 0 \(EOA direct mode\), " r"2 \(POLY_PROXY/proxy wallet\), or 3"),
+            match=r"must be 0 \(EOA direct mode\), 2 \(POLY_PROXY/proxy wallet\), or 3",
         ):
             PolymarketConfig(
                 POLYGON_PRIVATE_KEY="0" * 64,
@@ -2976,7 +2976,10 @@ class TestEnsureValidApiCredentials:
                 patch(
                     "polymarket_mcp.server._check_geoblock_status", new_callable=AsyncMock
                 ) as mock_geoblock,
-                patch("polymarket_mcp.server.create_polymarket_client", return_value=mock_client),
+                patch(
+                    "polymarket_mcp.server.create_polymarket_client",
+                    return_value=mock_client,
+                ),
                 patch("polymarket_mcp.server.create_safety_limits_from_config"),
                 patch("polymarket_mcp.server.get_rate_limiter"),
                 patch("polymarket_mcp.server.TradingTools"),
