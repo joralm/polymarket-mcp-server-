@@ -242,6 +242,12 @@ POLYMARKET_ENV=mainnet
 POLYMARKET_GEOBLOCK_URL=https://polymarket.com/api/geoblock
 ```
 
+**Optional on-chain allowance overrides (signature type 2):**
+- `POLYGON_RPC_URL` (default: `https://polygon-rpc.com`)
+- `POLYGON_CHAIN_ID` (default: current configured `POLYMARKET_CHAIN_ID`)
+- `USDC_ADDRESS` (default: Polygon USDC `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174`)
+- `CTF_EXCHANGE_ADDRESS` (default: `0x4bFb9717ad29EE08a240D9e6e8854045f9B0721c`)
+
 **Environment switch (recommended):**
 - `POLYMARKET_ENV=mainnet` → Chain `137`, CLOB `https://clob.polymarket.com`, Gamma `https://gamma-api.polymarket.com`
 - `POLYMARKET_ENV=testnet` → Chain `80002`, CLOB `https://clob-testnet.polytest.cloud`, Gamma `https://gcomm-api.polytest.cloud`

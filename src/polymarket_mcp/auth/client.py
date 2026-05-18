@@ -254,11 +254,22 @@ class PolymarketClient:
             polygon_rpc = os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com")
             w3 = Web3(Web3.HTTPProvider(polygon_rpc))
             if not w3.is_connected():
-                logger.error("Could not connect to Polygon RPC: %s", polygon_rpc)
+                logger.error(
+                    "Could not connect to Polygon RPC: %s. Check POLYGON_RPC_URL and network connectivity.",
+                    polygon_rpc,
+                )
                 return False
 
             account_address = to_checksum_address(self.address)
-            private_key = self.private_key
+            raw_chain_id = os.getenv("POLYGON_CHAIN_ID", str(self.chain_id))
+            try:
+                chain_id = int(raw_chain_id)
+            except ValueError:
+                logger.error(
+                    "Invalid POLYGON_CHAIN_ID value '%s'. It must be a numeric chain ID.",
+                    raw_chain_id,
+                )
+                return False
 
             usdc_address = to_checksum_address(
                 os.getenv("USDC_ADDRESS") or DEFAULT_USDC_ADDRESS
@@ -319,13 +330,13 @@ class PolymarketClient:
                     "from": account_address,
                     "nonce": nonce,
                     "gasPrice": w3.eth.gas_price,
-                    "chainId": 137,
+                    "chainId": chain_id,
                 }
             )
             if "gas" not in tx:
                 tx["gas"] = approve_call.estimate_gas({"from": account_address})
 
-            signed_tx = w3.eth.account.sign_transaction(tx, private_key=private_key)
+            signed_tx = w3.eth.account.sign_transaction(tx, private_key=self.private_key)
             # eth-account>=0.13 exposes `raw_transaction`, while older web3/eth-account
             # stacks may still expose `rawTransaction`; support both.
             raw_transaction = getattr(signed_tx, "raw_transaction", None)
