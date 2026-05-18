@@ -261,6 +261,9 @@ class PolymarketClient:
                 or os.getenv("POLYGON_RPC_URL")
                 or "https://polygon-rpc.com"
             )
+            polygon_rpc = str(polygon_rpc).strip()
+            if not polygon_rpc:
+                polygon_rpc = "https://polygon-rpc.com"
             polygon_rpc_host = (urlparse(polygon_rpc).hostname or "").lower()
             if polygon_rpc_host == "polygon-rpc.com":
                 polygon_rpc = "https://polygon.llamarpc.com"
