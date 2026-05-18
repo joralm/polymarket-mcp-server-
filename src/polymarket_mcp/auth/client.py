@@ -146,24 +146,13 @@ class PolymarketClient:
 
         # For type-3 (POLY_1271/deposit wallet), if funder was not explicitly
         # configured (or was misconfigured to equal the signer EOA), discover
-        # the actual deposit wallet address from the CLOB profile endpoint.
+        # the actual deposit wallet address from the Gamma public profile endpoint.
         if self._is_type3_signature and requested_funder == self.address:
-            try:
-                discovered = self._discover_deposit_wallet(host, chain_id, private_key)
-                if discovered and discovered.lower() != self.address:
-                    self._log_deposit_wallet_discovery_banner(discovered)
-                    requested_funder = discovered.lower()
-                # If discovery returned the EOA or None, keep requested_funder as-is.
-            except RuntimeError as exc:
-                logger.error(
-                    "Could not auto-discover deposit wallet address from CLOB /profile: %s. "
-                    "Server will start with funder=%s (your EOA). "
-                    "Trading on mainnet will fail until POLYMARKET_FUNDER is set correctly. "
-                    "Manually set POLYMARKET_FUNDER=<your deposit wallet address> "
-                    "and POLYMARKET_SIGNATURE_TYPE=3 in your environment.",
-                    exc,
-                    self.address,
-                )
+            gamma_api_url = os.environ.get("GAMMA_API_URL", "https://gamma-api.polymarket.com")
+            discovered = self._discover_funder_address(self.address, gamma_api_url)
+            if discovered and discovered.lower() != self.address:
+                self._log_deposit_wallet_discovery_banner(discovered)
+                requested_funder = discovered.lower()
 
         self.funder_address = requested_funder
         self.host = host
@@ -178,15 +167,7 @@ class PolymarketClient:
         self._expected_api_key = api_key
         self._api_credentials_verified = False
         self._zero_balance_proxy_refresh_attempted = False
-        if self._is_type3_signature:
-            if api_key or api_secret or passphrase:
-                logger.info(
-                    "signature_type=3 active: ignoring configured API credentials to keep "
-                    "signer-only flow clean."
-                )
-            self._api_creds_from_config = False
-            self._allow_credential_derivation = False
-        elif api_key and api_secret and passphrase:
+        if api_key and api_secret and passphrase:
             self.api_creds = ApiCreds(
                 api_key=api_key, api_secret=api_secret, api_passphrase=passphrase
             )
@@ -259,7 +240,7 @@ class PolymarketClient:
             }
 
             # Add L2 credentials if available
-            if self.api_creds and not self._is_type3_signature:
+            if self.api_creds:
                 client_args["creds"] = self.api_creds
             logger.debug(
                 "Initializing ClobClient with host=%s chain_id=%s signature_type=%s signer=%s funder=%s has_l2=%s",
@@ -276,7 +257,13 @@ class PolymarketClient:
             self.clob_client = self.client
             self._inject_clob_web3_poa_middleware()
 
-            logger.info("ClobClient initialized successfully")
+            logger.info(
+                "ClobClient initialized | signature_type=%s | signer=%s | funder=%s | L2 auth: %s",
+                self.signature_type,
+                self.address,
+                self.funder_address,
+                self.api_creds is not None,
+            )
 
         except Exception as e:
             logger.error(f"Failed to initialize ClobClient: {e}")
@@ -330,60 +317,26 @@ class PolymarketClient:
             self._inject_polygon_poa_middleware(self.clob_client.w3, "ClobClient w3")
 
     @staticmethod
-    def _discover_deposit_wallet(host: str, chain_id: int, private_key: str) -> Optional[str]:
-        """Discover the deposit wallet (proxy wallet) address for a signer key.
-
-        Creates a temporary L1-only CLOB client and calls ``GET /profile`` to
-        retrieve the proxy/deposit wallet address that Polymarket has associated
-        with the supplied private key.
-
-        On success the discovered address is returned.  On any network or API
-        error a ``RuntimeError`` is raised so that the caller can decide how to
-        handle the failure (e.g. abort startup or fall back gracefully).
-
-        Args:
-            host: CLOB API host URL (e.g. ``https://clob.polymarket.com``).
-            chain_id: Polygon chain ID (137 for mainnet).
-            private_key: Signer wallet private key (hex, with or without 0x).
-
-        Returns:
-            The checksummed deposit wallet address string, or ``None`` if the
-            profile response does not contain a recognizable wallet field.
-
-        Raises:
-            RuntimeError: If the CLOB API call fails for any reason.
-        """
+    def _discover_funder_address(eoa_address: str, gamma_api_url: str) -> Optional[str]:
+        """Discover the deposit wallet (proxy wallet) via the Gamma public profile API."""
         try:
-            probe_client = ClobClient(host=host, chain_id=chain_id, key=private_key)
-            # Call GET /profile with L1 auth headers using the SDK's internal helpers.
-            l1_headers = probe_client._l1_headers()
-            profile = probe_client._get(f"{host}/profile", headers=l1_headers)
-            if not isinstance(profile, dict):
-                raise RuntimeError(
-                    f"Unexpected /profile response type: {type(profile).__name__}"
-                )
-            # Polymarket returns the proxy/deposit wallet under different keys
-            # depending on the API version.
-            proxy_wallet = (
-                profile.get("proxyWallet")
-                or profile.get("proxy_wallet")
-                or profile.get("depositWallet")
-                or profile.get("deposit_wallet")
-            )
-            if not proxy_wallet:
+            url = f"{gamma_api_url.rstrip('/')}/public-profile"
+            resp = httpx.get(url, params={"address": eoa_address}, timeout=10.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                proxy_wallet = data.get("proxyWallet")
+                if proxy_wallet and proxy_wallet.lower() != eoa_address.lower():
+                    return str(proxy_wallet)
                 logger.warning(
-                    "CLOB /profile response did not contain a recognizable wallet address field. "
-                    "Known response keys: %s",
-                    sorted(profile.keys()),
+                    "Gamma API returned no proxy wallet for this address.\n"
+                    "         If you just created this account, the proxy wallet may not be\n"
+                    "         deployed yet. Set POLYMARKET_FUNDER manually after checking\n"
+                    "         polymarket.com/profile for your wallet address."
                 )
-                return None
-            return str(proxy_wallet)
-        except RuntimeError:
-            raise
+            return None
         except Exception as exc:
-            raise RuntimeError(
-                f"Failed to discover deposit wallet address from CLOB /profile endpoint: {exc}"
-            ) from exc
+            logger.warning("Gamma API profile lookup failed: %s", exc)
+            return None
 
     @staticmethod
     def _log_deposit_wallet_discovery_banner(deposit_wallet: str) -> None:
@@ -399,15 +352,10 @@ class PolymarketClient:
         # The separator line uses 66 inner chars to match the ╔...╗ / ╚...╝ border layout.
         line = "═" * 66
         logger.warning("╔%s╗", line)
-        logger.warning("║  POLYMARKET_FUNDER not configured or equals POLYGON_ADDRESS  ║")
-        logger.warning("║  Discovered deposit wallet address from CLOB API:            ║")
-        logger.warning("║  %-64s║", deposit_wallet)
-        logger.warning("║                                                              ║")
-        logger.warning("║  Add this to your docker-compose.yml / .env:                 ║")
+        logger.warning("║  Deposit wallet discovered via Gamma API:                    ║")
         logger.warning("║  %-64s║", f"POLYMARKET_FUNDER={deposit_wallet}")
-        logger.warning("║  POLYMARKET_SIGNATURE_TYPE=3                                 ║")
         logger.warning("║                                                              ║")
-        logger.warning("║  Then restart the server.                                    ║")
+        logger.warning("║  Add this line to your docker-compose.yml and restart.       ║")
         logger.warning("╚%s╝", line)
 
     def auto_approve_allowances(self) -> bool:
@@ -564,10 +512,6 @@ class PolymarketClient:
         Raises:
             Exception: If credential creation fails
         """
-        if self._is_type3_signature:
-            raise RuntimeError(
-                "signature_type=3 uses signer-only order flow and must not derive API keys."
-            )
         try:
             logger.info("Creating API credentials...")
 
@@ -1435,14 +1379,6 @@ class PolymarketClient:
             Exception: If no credentials exist *and* creating new ones fails
                        (e.g. the wallet has insufficient allowance).
         """
-        if self._is_type3_signature:
-            logger.info(
-                "signature_type=3 active: skipping startup API credential validation/derivation."
-            )
-            # This flag tracks startup auth readiness. For signature_type=3, no
-            # API-key validation exists, so signer-only readiness is considered verified.
-            self._api_credentials_verified = True
-            return
         if not self.api_creds:
             if not self._allow_credential_derivation:
                 raise RuntimeError(
@@ -1571,9 +1507,6 @@ class PolymarketClient:
         Raises:
             Exception: If credential derivation fails.
         """
-        if self._is_type3_signature:
-            logger.info("signature_type=3 active: credential refresh is disabled.")
-            return False
         logger.info("Refreshing API credentials via create_or_derive_api_key()...")
         old_api_key = self.api_creds.api_key if self.api_creds else None
         new_creds = self.client.create_or_derive_api_key()

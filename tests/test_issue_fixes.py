@@ -2735,7 +2735,7 @@ class TestEnsureValidApiCredentials:
             )
         return client
 
-    def test_signature_type_3_ignores_configured_api_credentials(self):
+    def test_signature_type_3_uses_configured_api_credentials(self):
         with patch("polymarket_mcp.auth.client.ClobClient"):
             client = PolymarketClient(
                 private_key=self._DUMMY_PRIVATE_KEY,
@@ -2746,7 +2746,8 @@ class TestEnsureValidApiCredentials:
                 passphrase="legacy-pass",
             )
 
-        assert client.api_creds is None
+        assert client.api_creds is not None
+        assert client.api_creds.api_key == "legacy-key"
         assert client._allow_credential_derivation is False
 
     @pytest.mark.asyncio
@@ -2925,7 +2926,7 @@ class TestEnsureValidApiCredentials:
                 setattr(server_module, key, val)
 
     @pytest.mark.asyncio
-    async def test_initialize_server_skips_ensure_valid_for_signature_type_3(self):
+    async def test_initialize_server_calls_ensure_valid_for_signature_type_3(self):
         import polymarket_mcp.server as server_module
 
         saved = {
@@ -2976,7 +2977,7 @@ class TestEnsureValidApiCredentials:
                 mock_geoblock.return_value = False
                 await server_module.initialize_server()
 
-            mock_client.ensure_valid_api_credentials.assert_not_awaited()
+            mock_client.ensure_valid_api_credentials.assert_awaited_once()
         finally:
             for key, val in saved.items():
                 setattr(server_module, key, val)
@@ -3777,63 +3778,63 @@ class TestDepositWalletDiscovery:
 
         return fake_clob_init
 
-    def test_discover_deposit_wallet_returns_proxy_wallet(self):
-        """_discover_deposit_wallet extracts proxyWallet from /profile response."""
-        mock_signer = MagicMock()
-        profile_response = {"proxyWallet": self.DEPOSIT_WALLET, "address": self.SIGNER_ADDRESS}
+    def test_discover_funder_address_returns_proxy_wallet(self):
+        """_discover_funder_address extracts proxyWallet from the Gamma API response."""
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"proxyWallet": self.DEPOSIT_WALLET}
 
-        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
-        with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(ClobClient, "_l1_headers", return_value={"auth": "token"}):
-                with patch.object(ClobClient, "_get", return_value=profile_response):
-                    result = PolymarketClient._discover_deposit_wallet(
-                        "https://clob.polymarket.com", 137, self.PRIVATE_KEY
-                    )
+        with patch("polymarket_mcp.auth.client.httpx.get", return_value=response) as mock_get:
+            result = PolymarketClient._discover_funder_address(
+                self.SIGNER_ADDRESS,
+                "https://gamma-api.polymarket.com",
+            )
 
+        mock_get.assert_called_once_with(
+            "https://gamma-api.polymarket.com/public-profile",
+            params={"address": self.SIGNER_ADDRESS},
+            timeout=10.0,
+        )
         assert result == self.DEPOSIT_WALLET
 
-    def test_discover_deposit_wallet_handles_proxy_wallet_key(self):
-        """_discover_deposit_wallet also handles snake_case proxy_wallet key."""
-        mock_signer = MagicMock()
-        profile_response = {"proxy_wallet": self.DEPOSIT_WALLET}
+    def test_discover_funder_address_returns_none_without_proxy_wallet(self):
+        """_discover_funder_address returns None when Gamma reports no proxy wallet."""
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"proxyWallet": None}
 
-        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
-        with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(ClobClient, "_l1_headers", return_value={}):
-                with patch.object(ClobClient, "_get", return_value=profile_response):
-                    result = PolymarketClient._discover_deposit_wallet(
-                        "https://clob.polymarket.com", 137, self.PRIVATE_KEY
-                    )
+        with patch("polymarket_mcp.auth.client.httpx.get", return_value=response):
+            result = PolymarketClient._discover_funder_address(
+                self.SIGNER_ADDRESS,
+                "https://gamma-api.polymarket.com",
+            )
 
-        assert result == self.DEPOSIT_WALLET
+        assert result is None
 
-    def test_discover_deposit_wallet_raises_on_network_error(self):
-        """_discover_deposit_wallet raises RuntimeError when the API call fails."""
-        mock_signer = MagicMock()
+    def test_discover_funder_address_returns_none_on_network_error(self):
+        """_discover_funder_address returns None when the Gamma API call fails."""
+        with patch(
+            "polymarket_mcp.auth.client.httpx.get",
+            side_effect=httpx.ConnectError("network error"),
+        ):
+            result = PolymarketClient._discover_funder_address(
+                self.SIGNER_ADDRESS,
+                "https://gamma-api.polymarket.com",
+            )
 
-        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
-        with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(ClobClient, "_l1_headers", return_value={}):
-                with patch.object(
-                    ClobClient, "_get", side_effect=ConnectionError("network error")
-                ):
-                    with pytest.raises(RuntimeError, match="Failed to discover deposit wallet"):
-                        PolymarketClient._discover_deposit_wallet(
-                            "https://clob.polymarket.com", 137, self.PRIVATE_KEY
-                        )
+        assert result is None
 
-    def test_discover_deposit_wallet_returns_none_when_no_wallet_field(self):
-        """_discover_deposit_wallet returns None when /profile has no wallet field."""
-        mock_signer = MagicMock()
-        profile_response = {"address": self.SIGNER_ADDRESS, "email": "user@example.com"}
+    def test_discover_funder_address_returns_none_when_proxy_matches_eoa(self):
+        """_discover_funder_address returns None when Gamma reports the EOA itself."""
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"proxyWallet": self.SIGNER_ADDRESS}
 
-        fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
-        with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(ClobClient, "_l1_headers", return_value={}):
-                with patch.object(ClobClient, "_get", return_value=profile_response):
-                    result = PolymarketClient._discover_deposit_wallet(
-                        "https://clob.polymarket.com", 137, self.PRIVATE_KEY
-                    )
+        with patch("polymarket_mcp.auth.client.httpx.get", return_value=response):
+            result = PolymarketClient._discover_funder_address(
+                self.SIGNER_ADDRESS,
+                "https://gamma-api.polymarket.com",
+            )
 
         assert result is None
 
@@ -3845,14 +3846,17 @@ class TestDepositWalletDiscovery:
 
         fake_init = self._make_fake_clob_init(captured_args, signer_obj=mock_signer)
         with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(ClobClient, "_l1_headers", return_value={}):
-                with patch.object(ClobClient, "_get", return_value=profile_response):
-                    with patch.object(ClobClient, "update_balance_allowance"):
-                        client = PolymarketClient(
-                            private_key=self.PRIVATE_KEY,
-                            address=self.SIGNER_ADDRESS,
-                            signature_type=3,
-                        )
+            with patch("polymarket_mcp.auth.client.httpx.get") as mock_get:
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = profile_response
+                mock_get.return_value = response
+                with patch.object(ClobClient, "update_balance_allowance"):
+                    client = PolymarketClient(
+                        private_key=self.PRIVATE_KEY,
+                        address=self.SIGNER_ADDRESS,
+                        signature_type=3,
+                    )
 
         assert client.funder_address == self.DEPOSIT_WALLET.lower()
         assert captured_args.get("funder") == self.DEPOSIT_WALLET.lower()
@@ -3865,7 +3869,7 @@ class TestDepositWalletDiscovery:
         fake_init = self._make_fake_clob_init(captured_args, signer_obj=mock_signer)
         discover_mock = MagicMock(return_value=self.DEPOSIT_WALLET)
         with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(PolymarketClient, "_discover_deposit_wallet", discover_mock):
+            with patch.object(PolymarketClient, "_discover_funder_address", discover_mock):
                 with patch.object(ClobClient, "update_balance_allowance"):
                     client = PolymarketClient(
                         private_key=self.PRIVATE_KEY,
@@ -3877,8 +3881,8 @@ class TestDepositWalletDiscovery:
         discover_mock.assert_not_called()
         assert client.funder_address == "0x" + "c" * 40
 
-    def test_startup_continues_with_signer_when_discovery_fails(self):
-        """When discovery raises RuntimeError, startup logs error and uses signer as funder."""
+    def test_startup_continues_with_signer_when_discovery_returns_none(self):
+        """When discovery returns None, startup uses the signer as funder."""
 
         def fake_initialize(self_inner):
             self_inner.client = MagicMock()
@@ -3887,8 +3891,8 @@ class TestDepositWalletDiscovery:
         with patch.object(PolymarketClient, "_initialize_client", fake_initialize):
             with patch.object(
                 PolymarketClient,
-                "_discover_deposit_wallet",
-                side_effect=RuntimeError("API unreachable"),
+                "_discover_funder_address",
+                return_value=None,
             ):
                 client = PolymarketClient(
                     private_key=self.PRIVATE_KEY,
@@ -3905,18 +3909,21 @@ class TestDepositWalletDiscovery:
 
         fake_init = self._make_fake_clob_init(signer_obj=mock_signer)
         with patch.object(ClobClient, "__init__", fake_init):
-            with patch.object(ClobClient, "_l1_headers", return_value={}):
-                with patch.object(ClobClient, "_get", return_value=profile_response):
-                    with patch.object(ClobClient, "update_balance_allowance"):
-                        with patch.object(
-                            PolymarketClient,
-                            "_log_deposit_wallet_discovery_banner",
-                        ) as banner_mock:
-                            PolymarketClient(
-                                private_key=self.PRIVATE_KEY,
-                                address=self.SIGNER_ADDRESS,
-                                signature_type=3,
-                            )
+            with patch("polymarket_mcp.auth.client.httpx.get") as mock_get:
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = profile_response
+                mock_get.return_value = response
+                with patch.object(ClobClient, "update_balance_allowance"):
+                    with patch.object(
+                        PolymarketClient,
+                        "_log_deposit_wallet_discovery_banner",
+                    ) as banner_mock:
+                        PolymarketClient(
+                            private_key=self.PRIVATE_KEY,
+                            address=self.SIGNER_ADDRESS,
+                            signature_type=3,
+                        )
 
         banner_mock.assert_called_once_with(self.DEPOSIT_WALLET)
 
@@ -3929,7 +3936,7 @@ class TestDepositWalletDiscovery:
 
         with patch.object(PolymarketClient, "_initialize_client", fake_initialize):
             with patch.object(
-                PolymarketClient, "_discover_deposit_wallet", return_value=self.DEPOSIT_WALLET
+                PolymarketClient, "_discover_funder_address", return_value=self.DEPOSIT_WALLET
             ):
                 with patch.object(
                     PolymarketClient, "_log_deposit_wallet_discovery_banner"
