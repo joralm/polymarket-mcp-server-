@@ -2898,7 +2898,7 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
-        mock_config.POLYGON_RPC_URL = ""
+        mock_config.POLYGON_RPC_URL = "https://polygon-rpc.example.com"
         mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
         mock_config.POLYMARKET_FUNDER = mock_config.effective_funder
@@ -2953,7 +2953,7 @@ class TestEnsureValidApiCredentials:
         mock_config.POLYMARKET_ENV = "mainnet"
         mock_config.CLOB_API_URL = "https://clob.polymarket.com"
         mock_config.GAMMA_API_URL = "https://gamma-api.polymarket.com"
-        mock_config.POLYGON_RPC_URL = ""
+        mock_config.POLYGON_RPC_URL = "https://polygon-rpc.example.com"
         mock_config.POLYMARKET_GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
         mock_config.effective_funder = "0x" + "0" * 40
         mock_config.POLYMARKET_FUNDER = mock_config.effective_funder
