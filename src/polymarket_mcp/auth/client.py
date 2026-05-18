@@ -318,7 +318,16 @@ class PolymarketClient:
 
     @staticmethod
     def _discover_funder_address(eoa_address: str, gamma_api_url: str) -> Optional[str]:
-        """Discover the deposit wallet (proxy wallet) via the Gamma public profile API."""
+        """Discover the deposit wallet (proxy wallet) via the Gamma public profile API.
+
+        Args:
+            eoa_address: Signer wallet address used to query the public profile.
+            gamma_api_url: Base Gamma API URL.
+
+        Returns:
+            The discovered proxy wallet address, or ``None`` when the request fails,
+            no proxy wallet is present, or the proxy wallet matches the EOA.
+        """
         try:
             url = f"{gamma_api_url.rstrip('/')}/public-profile"
             resp = httpx.get(url, params={"address": eoa_address}, timeout=10.0)
